@@ -1,6 +1,6 @@
 # Reply Translator
 
-Offline Aether film prop. The session simulates development of a reply translation extension.
+Offline Andex film prop. The session simulates development of a reply translation extension.
 This archive contains the reviewable design and state reducer, not a production translator.
 
 Target language defaults to the application language. Each response owns independent loading,

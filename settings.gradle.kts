@@ -15,10 +15,10 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "Aether"
+rootProject.name = "Andex"
 include(":shared")
 
-val sharedOnly = providers.gradleProperty("aether.sharedOnly").orNull.toBoolean()
+val sharedOnly = providers.gradleProperty("andex.sharedOnly").orNull.toBoolean()
 if (!sharedOnly) {
     include(":app")
     include(":terminal-emulator")

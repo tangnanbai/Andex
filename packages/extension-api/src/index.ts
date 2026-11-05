@@ -1,33 +1,33 @@
-export type AetherJsonObject = Record<string, unknown>;
+export type AndexJsonObject = Record<string, unknown>;
 
-export type AetherView =
-  | AetherJsonObject
-  | AetherView[]
+export type AndexView =
+  | AndexJsonObject
+  | AndexView[]
   | string
   | null
   | undefined;
 
-export type AetherRenderContext = AetherJsonObject & {
+export type AndexRenderContext = AndexJsonObject & {
   extension: {
     id: string;
     name: string;
     path: string;
   };
-  storage: AetherJsonObject;
+  storage: AndexJsonObject;
 };
 
-export interface AetherSurfaceDefinition {
+export interface AndexSurfaceDefinition {
   id?: string;
   order?: number;
   render?:
-    | AetherView
+    | AndexView
     | ((
-      context: AetherRenderContext,
-    ) => AetherView | Promise<AetherView>);
-  tree?: AetherView;
+      context: AndexRenderContext,
+    ) => AndexView | Promise<AndexView>);
+  tree?: AndexView;
 }
 
-export type AetherSettingType =
+export type AndexSettingType =
   | "text"
   | "password"
   | "textarea"
@@ -58,26 +58,26 @@ export type AetherSettingType =
   | "result-card"
   | "callout";
 
-export interface AetherSettingOption {
+export interface AndexSettingOption {
   value: string;
   label: string;
 }
 
-export interface AetherSettingActionItem {
+export interface AndexSettingActionItem {
   label: string;
   action: string;
-  args?: AetherJsonObject;
+  args?: AndexJsonObject;
   category?: string;
   tone?: "primary" | "neutral" | "danger";
   enabled?: boolean;
 }
 
-export interface AetherSettingDetailItem {
+export interface AndexSettingDetailItem {
   label: string;
   value: string;
 }
 
-export interface AetherSettingDefinition {
+export interface AndexSettingDefinition {
   id: string;
   label?: string;
   title?: string;
@@ -86,15 +86,15 @@ export interface AetherSettingDefinition {
   tag?: string;
   pill?: string;
   badge?: string;
-  type?: AetherSettingType;
+  type?: AndexSettingType;
   default?: string | number | boolean;
   placeholder?: string;
-  options?: AetherSettingOption[];
+  options?: AndexSettingOption[];
   min?: number;
   max?: number;
   step?: number;
   action?: string;
-  args?: AetherJsonObject;
+  args?: AndexJsonObject;
   category?: string;
   url?: string;
   icon?: string;
@@ -105,28 +105,28 @@ export interface AetherSettingDefinition {
   toggleAction?: string;
   editAction?: string;
   editCategory?: string;
-  editArgs?: AetherJsonObject;
+  editArgs?: AndexJsonObject;
   deleteAction?: string;
-  deleteArgs?: AetherJsonObject;
+  deleteArgs?: AndexJsonObject;
   expanded?: boolean;
-  actions?: AetherSettingActionItem[];
-  details?: AetherSettingDetailItem[];
+  actions?: AndexSettingActionItem[];
+  details?: AndexSettingDetailItem[];
   resultText?: string;
   result?: string;
   buttonLabel?: string;
   multiline?: boolean;
   secret?: boolean;
-  settings?: AetherSettingDefinition[];
+  settings?: AndexSettingDefinition[];
 }
 
-export interface AetherSettingsSection {
+export interface AndexSettingsSection {
   id?: string;
   title?: string;
   description?: string;
-  settings: AetherSettingDefinition[];
+  settings: AndexSettingDefinition[];
 }
 
-export interface AetherSettingsDefinition {
+export interface AndexSettingsDefinition {
   id: string;
   title: string;
   subtitle?: string;
@@ -135,12 +135,12 @@ export interface AetherSettingsDefinition {
   trailingIcon?: string;
   trailingAction?: string;
   trailingCategory?: string;
-  trailingArgs?: AetherJsonObject;
-  sections?: AetherSettingsSection[];
-  categories?: AetherSettingsCategory[];
+  trailingArgs?: AndexJsonObject;
+  sections?: AndexSettingsSection[];
+  categories?: AndexSettingsCategory[];
 }
 
-export interface AetherSettingsCategory {
+export interface AndexSettingsCategory {
   id: string;
   title: string;
   subtitle?: string;
@@ -149,168 +149,168 @@ export interface AetherSettingsCategory {
   trailingIcon?: string;
   trailingAction?: string;
   trailingCategory?: string;
-  trailingArgs?: AetherJsonObject;
+  trailingArgs?: AndexJsonObject;
   hidden?: boolean;
-  sections: AetherSettingsSection[];
+  sections: AndexSettingsSection[];
 }
 
-export interface AetherComposerMenuItemDefinition {
+export interface AndexComposerMenuItemDefinition {
   id: string;
   title: string;
   subtitle?: string;
   icon?: string;
   order?: number;
   action?: string;
-  args?: AetherJsonObject;
+  args?: AndexJsonObject;
   selected?: boolean;
 }
 
-export interface AetherMessageTypeDefinition {
+export interface AndexMessageTypeDefinition {
   type: string;
   title?: string;
   icon?: string;
   render:
-    | AetherView
-    | ((context: AetherRenderContext & { message: AetherJsonObject }) => AetherView | Promise<AetherView>);
+    | AndexView
+    | ((context: AndexRenderContext & { message: AndexJsonObject }) => AndexView | Promise<AndexView>);
 }
 
-export type AetherComponentMode =
+export type AndexComponentMode =
   | "before"
   | "after"
   | "replace"
   | "wrap"
   | "hide";
 
-export interface AetherComponentDefinition extends AetherSurfaceDefinition {
-  mode?: AetherComponentMode;
+export interface AndexComponentDefinition extends AndexSurfaceDefinition {
+  mode?: AndexComponentMode;
 }
 
-export interface AetherActionContext extends AetherRenderContext {
+export interface AndexActionContext extends AndexRenderContext {
   action: string;
 }
 
-export interface AetherEventContext extends AetherRenderContext {
+export interface AndexEventContext extends AndexRenderContext {
   event: string;
 }
 
-export interface AetherUi {
+export interface AndexUi {
   node(
     type: string,
-    properties?: AetherJsonObject,
-    children?: AetherView[],
-  ): AetherJsonObject;
-  text(text: string, properties?: AetherJsonObject): AetherJsonObject;
-  code(text: string, properties?: AetherJsonObject): AetherJsonObject;
+    properties?: AndexJsonObject,
+    children?: AndexView[],
+  ): AndexJsonObject;
+  text(text: string, properties?: AndexJsonObject): AndexJsonObject;
+  code(text: string, properties?: AndexJsonObject): AndexJsonObject;
   column(
-    children: AetherView[],
-    properties?: AetherJsonObject,
-  ): AetherJsonObject;
+    children: AndexView[],
+    properties?: AndexJsonObject,
+  ): AndexJsonObject;
   row(
-    children: AetherView[],
-    properties?: AetherJsonObject,
-  ): AetherJsonObject;
+    children: AndexView[],
+    properties?: AndexJsonObject,
+  ): AndexJsonObject;
   box(
-    children: AetherView[],
-    properties?: AetherJsonObject,
-  ): AetherJsonObject;
+    children: AndexView[],
+    properties?: AndexJsonObject,
+  ): AndexJsonObject;
   card(
-    children: AetherView[],
-    properties?: AetherJsonObject,
-  ): AetherJsonObject;
+    children: AndexView[],
+    properties?: AndexJsonObject,
+  ): AndexJsonObject;
   button(
     label: string,
     action: string,
-    properties?: AetherJsonObject,
-  ): AetherJsonObject;
+    properties?: AndexJsonObject,
+  ): AndexJsonObject;
   iconButton(
     icon: string,
     action: string,
-    properties?: AetherJsonObject,
-  ): AetherJsonObject;
+    properties?: AndexJsonObject,
+  ): AndexJsonObject;
   switch(
     label: string,
     checked: boolean,
     action: string,
-    properties?: AetherJsonObject,
-  ): AetherJsonObject;
+    properties?: AndexJsonObject,
+  ): AndexJsonObject;
   input(
     value: string,
     action: string,
-    properties?: AetherJsonObject,
-  ): AetherJsonObject;
-  spacer(size?: number, properties?: AetherJsonObject): AetherJsonObject;
-  progress(value?: number, properties?: AetherJsonObject): AetherJsonObject;
-  web(properties: AetherJsonObject): AetherJsonObject;
-  core(properties?: AetherJsonObject): AetherJsonObject;
+    properties?: AndexJsonObject,
+  ): AndexJsonObject;
+  spacer(size?: number, properties?: AndexJsonObject): AndexJsonObject;
+  progress(value?: number, properties?: AndexJsonObject): AndexJsonObject;
+  web(properties: AndexJsonObject): AndexJsonObject;
+  core(properties?: AndexJsonObject): AndexJsonObject;
 }
 
-export interface AetherExtensionAPI {
+export interface AndexExtensionAPI {
   readonly apiVersion: 2;
   readonly extension: {
     id: string;
     name: string;
     path: string;
   };
-  readonly ui: AetherUi;
+  readonly ui: AndexUi;
   readonly host: {
     invoke(
       method: string,
-      args?: AetherJsonObject,
-    ): Promise<AetherJsonObject>;
+      args?: AndexJsonObject,
+    ): Promise<AndexJsonObject>;
   };
   readonly services: {
-    list(): Promise<AetherJsonObject>;
-    describe(service: string): Promise<AetherJsonObject>;
+    list(): Promise<AndexJsonObject>;
+    describe(service: string): Promise<AndexJsonObject>;
     invoke(
       service: string,
       method: string,
-      args?: AetherJsonObject,
-    ): Promise<AetherJsonObject>;
+      args?: AndexJsonObject,
+    ): Promise<AndexJsonObject>;
   };
   readonly state: {
-    get(path?: string): Promise<AetherJsonObject>;
-    patch(path: string, value: unknown): Promise<AetherJsonObject>;
+    get(path?: string): Promise<AndexJsonObject>;
+    patch(path: string, value: unknown): Promise<AndexJsonObject>;
     transaction(
       operations: Array<{
         op?: "set" | "remove";
         path: string;
         value?: unknown;
       }>,
-    ): Promise<AetherJsonObject>;
+    ): Promise<AndexJsonObject>;
   };
   readonly storage: {
     get<T = unknown>(key: string, fallback?: T): T;
     set(key: string, value: unknown): void;
     delete(key: string): void;
     clear(): void;
-    snapshot(): AetherJsonObject;
+    snapshot(): AndexJsonObject;
   };
   readonly messages: {
-    append(type: string, payload?: AetherJsonObject, text?: string): Promise<AetherJsonObject>;
+    append(type: string, payload?: AndexJsonObject, text?: string): Promise<AndexJsonObject>;
   };
   registerSurface(
     slot: string,
     definition:
-      | AetherSurfaceDefinition
-      | AetherView
+      | AndexSurfaceDefinition
+      | AndexView
       | ((
-        context: AetherRenderContext,
-      ) => AetherView | Promise<AetherView>),
+        context: AndexRenderContext,
+      ) => AndexView | Promise<AndexView>),
   ): () => void;
   registerComponent(
     target: string,
     definition:
-      | AetherComponentDefinition
-      | AetherView
+      | AndexComponentDefinition
+      | AndexView
       | ((
-        context: AetherRenderContext,
-      ) => AetherView | Promise<AetherView>),
+        context: AndexRenderContext,
+      ) => AndexView | Promise<AndexView>),
   ): () => void;
-  registerSettings(definition: AetherSettingsDefinition): () => void;
-  registerComposerMenuItem(definition: AetherComposerMenuItemDefinition): () => void;
-  registerComposerMenu(definition: AetherComposerMenuItemDefinition): () => void;
-  registerMessageType(definition: AetherMessageTypeDefinition): () => void;
-  registerCustomMessage(definition: AetherMessageTypeDefinition): () => void;
+  registerSettings(definition: AndexSettingsDefinition): () => void;
+  registerComposerMenuItem(definition: AndexComposerMenuItemDefinition): () => void;
+  registerComposerMenu(definition: AndexComposerMenuItemDefinition): () => void;
+  registerMessageType(definition: AndexMessageTypeDefinition): () => void;
+  registerCustomMessage(definition: AndexMessageTypeDefinition): () => void;
   registerToolTitle(
     toolName: string,
     runningTitle: string,
@@ -320,37 +320,37 @@ export interface AetherExtensionAPI {
   registerAction(
     id: string,
     handler: (
-      payload: AetherJsonObject,
-      context: AetherActionContext,
+      payload: AndexJsonObject,
+      context: AndexActionContext,
     ) => unknown | Promise<unknown>,
   ): () => void;
   on(
     event: string,
     handler: (
-      payload: AetherJsonObject,
-      context: AetherEventContext,
+      payload: AndexJsonObject,
+      context: AndexEventContext,
     ) => unknown | Promise<unknown>,
   ): () => void;
   intercept(
     operation: string,
     handler: (
-      payload: AetherJsonObject,
-      context: AetherEventContext,
+      payload: AndexJsonObject,
+      context: AndexEventContext,
     ) => unknown | Promise<unknown>,
   ): () => void;
   invalidate(): void;
   notify(message: string, level?: "info" | "warning" | "error"): void;
 }
 
-export type AetherExtensionFactory = (
-  api: AetherExtensionAPI,
+export type AndexExtensionFactory = (
+  api: AndexExtensionAPI,
 ) =>
   | void
   | (() => void | Promise<void>)
   | Promise<void | (() => void | Promise<void>)>;
 
-export declare const ui: AetherUi;
+export declare const ui: AndexUi;
 
-export declare function defineAetherExtension<
-  T extends AetherExtensionFactory,
+export declare function defineAndexExtension<
+  T extends AndexExtensionFactory,
 >(factory: T): T;

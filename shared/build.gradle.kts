@@ -26,7 +26,7 @@ kotlin {
             freeCompilerArgs += "-Xoverride-konan-properties=minVersion.ios=17.0"
         }
         binaries.framework {
-            baseName = "AetherShared"
+            baseName = "AndexShared"
             isStatic = true
         }
     }
@@ -38,6 +38,7 @@ kotlin {
             implementation(compose.material3)
             implementation(compose.materialIconsExtended)
             implementation(compose.components.resources)
+            implementation("dev.chrisbanes.haze:haze:1.7.2")
             implementation(libs.kotlinx.coroutines.core)
             implementation(libs.kotlinx.serialization.json)
             implementation(libs.androidx.room.runtime)
@@ -53,6 +54,8 @@ kotlin {
         }
         androidMain.dependencies {
             implementation(libs.ktor.client.okhttp)
+            implementation(libs.androidx.activity.compose)
+            implementation(libs.androidx.lifecycle.runtime.compose)
         }
         iosMain.dependencies {
             implementation(libs.ktor.client.darwin)
@@ -77,7 +80,7 @@ room {
 }
 
 android {
-    namespace = "com.zhousl.aether.shared"
+    namespace = "com.android.andex.shared"
     compileSdk = 36
 
     defaultConfig {
@@ -92,7 +95,7 @@ android {
 
 compose.resources {
     publicResClass = true
-    packageOfResClass = "com.zhousl.aether.shared.resources"
+    packageOfResClass = "com.android.andex.shared.resources"
     generateResClass = always
 }
 

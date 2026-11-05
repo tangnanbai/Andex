@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <exclude domain="sharedpref" path="phone_control.xml" />
+    <exclude domain="sharedpref" path="first_launch_permissions.xml" />
+    <exclude domain="file" path="runtimes/termux/" />
+    <exclude domain="file" path="runtimes/native-tools/" />
+</full-backup-content>

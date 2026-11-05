@@ -1,8 +1,8 @@
 {
-  "name": "aether-global-skills-mod",
+  "name": "andex-global-skills-mod",
   "version": "1.0.0",
-  "description": "Minecraft-style replacement of Aether's native skill tray with persistent global defaults.",
-  "aether": {
+  "description": "Minecraft-style replacement of Andex's native skill tray with persistent global defaults.",
+  "andex": {
     "api": {
       "min": 2,
       "max": 2
@@ -12,6 +12,6 @@
     ]
   },
   "devDependencies": {
-    "@baimoqilin/aether-extension-api": "^2.0.0"
+    "@tangnanbai/andex-extension-api": "^2.0.0"
   }
 }

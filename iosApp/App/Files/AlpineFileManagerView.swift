@@ -45,7 +45,7 @@ struct AlpineFileEntry: Identifiable, Hashable {
 
 struct AlpineFileManagerView: View {
     @Environment(\.dismiss) private var dismiss
-    let host: AetherRuntimeHost
+    let host: AndexRuntimeHost
 
     var body: some View {
         NavigationStack {
@@ -76,10 +76,10 @@ private final class AlpineDirectoryModel: ObservableObject {
     @Published var isImporting = false
     @Published var isExporting = false
 
-    let host: AetherRuntimeHost
+    let host: AndexRuntimeHost
     let path: String
 
-    init(host: AetherRuntimeHost, path: String) {
+    init(host: AndexRuntimeHost, path: String) {
         self.host = host
         self.path = path
     }
@@ -200,7 +200,7 @@ private struct AlpineDirectoryView: View {
     @State private var pendingDeletion: AlpineFileEntry?
     @State private var importKind: ImportKind?
 
-    init(host: AetherRuntimeHost, path: String) {
+    init(host: AndexRuntimeHost, path: String) {
         _model = StateObject(wrappedValue: AlpineDirectoryModel(host: host, path: path))
     }
 
@@ -444,7 +444,7 @@ private final class AlpineFileModel: ObservableObject {
     @Published var isSaving = false
     @Published var isOpeningExternally = false
 
-    let host: AetherRuntimeHost
+    let host: AndexRuntimeHost
     let entry: AlpineFileEntry
     private var previewDirectory: URL?
     var allowsTextEditing: Bool {
@@ -452,7 +452,7 @@ private final class AlpineFileModel: ObservableObject {
         return data.count <= 8 * 1024 * 1024 && !shouldPreviewAlpineFile(name: entry.name, data: data)
     }
 
-    init(host: AetherRuntimeHost, entry: AlpineFileEntry) {
+    init(host: AndexRuntimeHost, entry: AlpineFileEntry) {
         self.host = host
         self.entry = entry
     }
@@ -533,7 +533,7 @@ private final class AlpineFileModel: ObservableObject {
 private struct AlpineFileView: View {
     @StateObject private var model: AlpineFileModel
 
-    init(host: AetherRuntimeHost, entry: AlpineFileEntry) {
+    init(host: AndexRuntimeHost, entry: AlpineFileEntry) {
         _model = StateObject(wrappedValue: AlpineFileModel(host: host, entry: entry))
     }
 

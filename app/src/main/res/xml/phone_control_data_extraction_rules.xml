@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="sharedpref" path="phone_control.xml" />
+        <exclude domain="sharedpref" path="first_launch_permissions.xml" />
+        <exclude domain="file" path="runtimes/termux/" />
+        <exclude domain="file" path="runtimes/native-tools/" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="sharedpref" path="phone_control.xml" />
+        <exclude domain="sharedpref" path="first_launch_permissions.xml" />
+        <exclude domain="file" path="runtimes/termux/" />
+        <exclude domain="file" path="runtimes/native-tools/" />
+    </device-transfer>
+</data-extraction-rules>

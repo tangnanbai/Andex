@@ -10,7 +10,7 @@ mkdir -p "$destination"
 
 rootfs="$destination/root.tar.gz"
 if [ ! -f "$rootfs" ] || [ "$(shasum -a 256 "$rootfs" | awk '{print $1}')" != "$rootfs_sha256" ]; then
-    temporary_rootfs=$(mktemp "${TMPDIR:-/tmp}/aether-rootfs.XXXXXX")
+    temporary_rootfs=$(mktemp "${TMPDIR:-/tmp}/andex-rootfs.XXXXXX")
     trap 'rm -f "$temporary_rootfs"' EXIT INT TERM
     curl --fail --location --retry 3 --output "$temporary_rootfs" "$rootfs_url"
     actual_sha256=$(shasum -a 256 "$temporary_rootfs" | awk '{print $1}')
@@ -26,7 +26,8 @@ bridge_source="$repo_root/pi-bridge/dist/bridge.mjs"
 extension_bridge_source="$repo_root/pi-bridge/dist/extension-bridge.mjs"
 worker_source="$repo_root/pi-bridge/dist/image-resize-worker.js"
 photon_wasm_source="$repo_root/pi-bridge/dist/photon_rs_bg.wasm"
-if [ ! -f "$bridge_source" ] || [ ! -f "$extension_bridge_source" ] || [ ! -f "$worker_source" ] || [ ! -f "$photon_wasm_source" ]; then
+if [ ! -f "$bridge_source" ] || [ ! -f "$extension_bridge_source" ] || [ ! -f "$worker_source" ] || [ ! -f "$photon_wasm_source" ] ||
+    [ -n "$(find "$repo_root/pi-bridge/src" "$repo_root/extensions/pi-long-memory" -type f -newer "$bridge_source" -print -quit)" ]; then
     npm_command=${NPM:-npm}
     (
         cd "$repo_root/pi-bridge"

@@ -1,132 +1,64 @@
 <p align="center">
-  <img src="app/src/main/res/drawable-nodpi/aether_mark.png" width="128" height="128" alt="Aether Logo">
+  <img src="app/src/main/res/drawable-nodpi/andex_mark.png" width="128" height="128" alt="Andex 图标">
 </p>
 
-<h1 align="center">Aether</h1>
+<h1 align="center">Andex</h1>
+
+<p align="center">在安卓手机上运行的 AI 助手，集成终端、手机控制和扩展能力。</p>
 
 <p align="center">
-  <strong>Soar with local AI.</strong><br>
-  A stunning, localized, highly extensible general-purpose AI Agent for Android, iOS and macOS.
+  <a href="https://github.com/tangnanbai/Andex/releases">下载 APK</a> ·
+  <a href="https://github.com/tangnanbai/Andex/issues">反馈问题</a>
 </p>
 
-<p align="center">
-  <a href="README_zh.md">中文</a> •
-  <a href="#-visuals--experience">Visuals & Experience</a> •
-  <a href="#-high-extensibility">Extensions</a> •
-  <a href="#-core-features">Core Features</a> •
-  <a href="https://aether.baimoqilin.com/docs">Documentation</a>
-</p>
+## 项目介绍
 
-<p align="center">
-  <a href="https://apps.apple.com/app/id6793855391">
-    <img alt="Download on the App Store" height="48" src="public/badge-appstore.svg" />
-  </a>
-  &nbsp;
-  <a href="https://github.com/Zhou-Shilin/Aether/releases">
-    <img alt="Get the APK on GitHub" height="48" src="public/badge-android.svg" />
-  </a>
-</p>
+Andex 基于 Aether 二次开发，将内置 Termux 环境、无障碍和 ADB 控制整合进手机端 AI 助手。你可以在对话中处理文件、运行命令、检索网页，并让 Agent 使用已授权的通道操作手机。
 
-<p align="center">
-  <table>
-    <tr>
-      <td><img src="public/welcome.jpg" width="280"></td>
-      <td><img src="public/agentmode.jpg" width="280"></td>
-      <td><img src="public/chat.jpg" width="280"></td>
-      <td><img src="public/research.jpg" width="280"></td>
-    </tr>
-  </table>
-</p>
+维护者：**Yukie**。应用包名：`com.android.andex`。
 
----
+## 主要功能
 
-## 🌪️ Aether 
+- **多模型对话**：支持 OpenAI、Anthropic、Google、OpenRouter、DeepSeek、Xiaomi，以及自定义请求地址和模型 ID。
+- **内置终端**：无需另外打开 Termux；支持运行命令、处理文件，集成 ADB、7zip 等工具。
+- **手机控制**：结合内置终端、无障碍、ADB 通道操作手机；无障碍需要在系统设置中授权，ADB 需要先连接可用设备。
+- **网页与 GitHub**：内置搜索、网页读取和 GitHub 相关技能，支持在获取的网页内容中查找信息。
+- **角色定义**：支持多角色、上传头像、默认角色及提示词；在对话右上角点击头像切换。
+- **上下文与记忆**：显示上下文使用情况，达到阈值时自动压缩，并提供长效记忆能力。
+- **任务轨迹**：从右侧打开轨迹面板，查看 Agent 的操作步骤及工具调用详情。
+- **后台进度**：任务运行时离开应用，可通过悬浮进度查看当前工作状态。
+- **独立配色**：主题色与背景色分开选择，包含黑、白及 7 种参考色，点击立即生效；默认浅色粉白、深色粉黑。文字、图标和描边随主题更新，并自动调整对比度。按钮与弹窗使用轻磨砂半透明效果。
+- **语音输入**：在通用设置中配置火山 ASR 后，按住输入框录音，松开识别，上滑取消；识别结果填入草稿。
+- **扩展能力**：支持 Pi 扩展、技能及工具调用。
 
-> "When the great Peng bird journeys to the Southern Ocean, it flaps the water for three thousand miles, spiraling upward on a whirlwind (*Aether/Fuyao*) to ninety thousand miles, and travels for six months before resting."
+模型服务和语音识别服务需要配置自己的 API 凭据。功能实际可用范围取决于设备系统、已授予的权限和服务配置。
 
-**Aether** is dedicated to bringing a modern, local AI Agent experience to mobile and desktop devices (Android, iOS, and macOS). Built on top of the Pi framework, it pairs a minimalist, polished UI with immense extensibility, seamless tool calling, and full extension ecosystem support.
+## 开始使用
 
-## 🧩 High Extensibility
+1. 从本仓库的发布页面下载 APK，安装并打开 Andex。
+2. 根据首次启动引导初始化内置环境，并授予需要使用的权限。
+3. 在模型设置中选择预设服务或新增自定义地址，填写 API Key 并选择模型。
+4. 如需操作手机，前往 Agent 模式开启无障碍或配置 ADB。
+5. 如需语音输入，在“设置 → 通用设置 → 语音输入”中配置火山 ASR。
 
-Aether natively supports loading standard [Pi Extensions](https://github.com/earendil-works/pi). To bring TUI-oriented extensions seamlessly to mobile touchscreens, Aether provides a rich **Extension API** allowing extensions to inject custom settings cards, interactive composer widgets, overlay transcript viewers, prompt interceptors, and semantic tool titles.
+## 本地构建
 
-| Extension | Description | Repository |
-| :--- | :--- | :--- |
-| **Pi Web Access*** | Web search across 20+ providers (OpenAI, Brave, Exa, Tavily, Perplexity, Gemini, SearXNG), GitHub repo cloning, PDF extraction, and YouTube/video understanding with native settings and transcript cards. | [AetherExtensions/pi-web-access](https://github.com/AetherExtensions/pi-web-access) |
-| **Pi MCP Adapter*** | Model Context Protocol (MCP) gateway supporting Stdio, Streamable HTTP, SSE, and Unix domain sockets with lazy loading, token-saving tool discovery, interactive OAuth authentication, and a visual server management GUI. | [AetherExtensions/pi-mcp-adapter](https://github.com/AetherExtensions/pi-mcp-adapter) |
-| **Pi Subagents*** | Claude Code-style autonomous sub-agents with parallel background execution, mid-run steering, live widget & FleetView cards above the composer, conversation overlay viewer, and `@handle` prompt mentions. | [AetherExtensions/pi-subagents](https://github.com/AetherExtensions/pi-subagents) |
+使用 JDK 17 和 Android SDK，在项目目录执行：
 
-*\* means it's an official extension adapted by the Aether team. Add your extension to the list by [submitting a PR](https://github.com/Zhou-Shilin/Aether/pulls).*
+```powershell
+.\gradlew.bat :app:assembleDebug
+```
 
-Extensions can be installed directly as zip packages in **Settings → Extensions → Import extension**.
+APK 输出到 `app/build/outputs/apk/debug/app-debug.apk`。具体依赖和 SDK 版本以 Gradle 配置为准。
 
-For extension development documentation, see <https://aether.baimoqilin.com/docs/extensions/overview.md>.
+## 参与开发
 
+欢迎通过本仓库提交问题或合并请求。应用更新检查指向本仓库的 Releases。
 
-## 📱 Visuals & Experience
+## 原项目与致谢
 
-Aether's UI and interactions are heavily inspired by excellent, mature applications like ChatGPT, Codex CLI/App, Gemini, and Poco Agent. Every animation and interaction detail has been carefully polished to break the stereotype that "open-source means cheap and unrefined."
+本项目基于 **[Zhou-Shilin/Aether](https://github.com/Zhou-Shilin/Aether)** 二次开发，感谢原作者及贡献者。
 
-<p align="center">
-  <table>
-    <tr>
-      <td><img src="public/input_bar.jpg" width="280"></td>
-      <td><img src="public/tool_execution.jpg" width="280"></td>
-      <td><img src="public/msg_options.jpg" width="280"></td>
-    </tr>
-  </table>
-</p>
+内置终端相关能力使用 [Termux](https://github.com/termux/termux-app) 及其生态项目。其他第三方组件及许可请参阅 [第三方声明](THIRD_PARTY_NOTICES.md) 和各组件许可证。
 
-
-## ✨ Core Features
-
-- **Stunning UI & Silky Smooth Interactions**: Distilling the design essence of top-tier apps like ChatGPT to create a minimalist, modern, and elegant interface.
-- **Pi Harness Kernel**: Powered by the Pi framework, providing the widest LLM provider compatibility and a lightweight, highly efficient Agent execution engine.
-- **Extreme Extensibility**: Inherits Pi's complete extension model while providing Aether's proprietary Script Extensions and Native Mods system to deeply customize mobile UI, settings, composer widgets, and runtime behavior.
-- **Built-in Alpine VM**: Includes an automatically installed Alpine Linux environment to run shell commands and tools out of the box.
-- **System File Manager Access** (Android): After initializing Alpine, select **Aether (Alpine)** in the system Files app or SAF document picker's sidebar to browse the environment and `/workspace`, create, edit, rename, delete, or copy files between Alpine and device storage. Changes apply directly to the files used by proot. System mounts such as `/dev`, `/proc`, and `/sys` are excluded.
-- **Extensible Host Control**: Supports optional Shizuku and Termux integration for direct device manipulation and automation. (Android only)
-
-
-## 🚀 Quick Start
-
-See <https://aether.baimoqilin.com/docs/quickstart>.
-
-
-## 🤝 Contributing
-
-This project is being developed sporadically by a 15yo student during their spare time (⁠ʘ⁠ᴗ⁠ʘ⁠✿⁠). Aether is still actively iterating and being polished. If you like this project, please consider giving it a ⭐ Star, or submit PRs and Issues to help make Aether even better!
-
-[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/R6R2131N5X)
-
-[![Afdian](https://img.shields.io/badge/Afdian-Sponsor-946ce6?style=social&logo=afdian)](https://afdian.com/a/BaimoQilin)
-
-
-## Special Thanks
-
-- OpenAI Codex
-- Google Gemini
-- [Linux DO Community](https://linux.do/)
-
-
-## Star History
-
-<a href="https://www.star-history.com/?repos=Zhou-Shilin%2FAether&type=date&legend=top-left">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=Zhou-Shilin/Aether&type=date&theme=dark&legend=top-left&sealed_token=EU5gsuVcs_Ravu88uM-u6K0mIGb0JVSVe65e7hxAoH_ZncZr6UgJy4gc1g-EF61t1btQdTyt7Nyo89r9dQvgFzXlIL8P9ebP6orOqbiVMs7vueE4DyTGaIWho_-VEiLYzE6mW76DqgnU00qG0i_JZmFL08ZPdWMRv0hEkUK9NQi_fBuUMqSOqYQNCMO6" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=Zhou-Shilin/Aether&type=date&legend=top-left&sealed_token=EU5gsuVcs_Ravu88uM-u6K0mIGb0JVSVe65e7hxAoH_ZncZr6UgJy4gc1g-EF61t1btQdTyt7Nyo89r9dQvgFzXlIL8P9ebP6orOqbiVMs7vueE4DyTGaIWho_-VEiLYzE6mW76DqgnU00qG0i_JZmFL08ZPdWMRv0hEkUK9NQi_fBuUMqSOqYQNCMO6" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=Zhou-Shilin/Aether&type=date&legend=top-left&sealed_token=EU5gsuVcs_Ravu88uM-u6K0mIGb0JVSVe65e7hxAoH_ZncZr6UgJy4gc1g-EF61t1btQdTyt7Nyo89r9dQvgFzXlIL8P9ebP6orOqbiVMs7vueE4DyTGaIWho_-VEiLYzE6mW76DqgnU00qG0i_JZmFL08ZPdWMRv0hEkUK9NQi_fBuUMqSOqYQNCMO6" />
- </picture>
-</a>
-
----
-
-## 📄 License
-
-This project is licensed under the **GPL-3.0 License**.
-
----
-
-<p align="center">
-  Built with ❤️ by Shilin "BaimoQilin" Zhou.
-</p>
+本项目许可证见 [LICENSE](LICENSE)；原项目及第三方组件的版权与许可声明予以保留。

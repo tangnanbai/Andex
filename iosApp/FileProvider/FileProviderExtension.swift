@@ -4,13 +4,13 @@ import UniformTypeIdentifiers
 
 final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension {
     private let manager: NSFileProviderManager
-    private let queue = DispatchQueue(label: "com.baimoqilin.aether.file-provider", qos: .utility)
+    private let queue = DispatchQueue(label: "com.android.andex.file-provider", qos: .utility)
     private var store: FakeFSStore?
     private var startupError: Error?
 
     required init(domain: NSFileProviderDomain) {
         guard let manager = NSFileProviderManager(for: domain) else {
-            fatalError("Aether File Provider could not create its domain manager.")
+            fatalError("Andex File Provider could not create its domain manager.")
         }
         self.manager = manager
         do {

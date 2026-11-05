@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="phone_control_title">Phone control</string>
+    <string name="phone_control_summary">ADB / Accessibility</string>
+    <string name="termux_automatic_storage">Termux is prepared automatically. Shared storage is available under ~/storage after granting Andex storage access on first launch.</string>
+    <string name="termux_embedded_description">Andex includes Termux and prepares it automatically on first launch. Manage its terminal and environment here.</string>
+    <string name="root_setup_embedded_termux_subtitle">Prepare and verify the embedded Termux runtime.</string>
+    <string name="phone_control_back">Back</string>
+    <string name="phone_control_refresh">Refresh status</string>
+    <string name="phone_control_ai_enabled">Allow AI screen and clipboard control</string>
+    <string name="phone_control_allow_title">Allow enhanced phone control?</string>
+    <string name="phone_control_allow_message">AI tools can access the clipboard and use your authorized ADB or accessibility connection to read and operate the real screen. Screen and clipboard content may be sent to your selected model provider. Turn this switch off to revoke these capabilities. Ordinary Termux commands remain available.</string>
+    <string name="phone_control_allow">Allow</string>
+    <string name="phone_control_embedded">Use embedded Termux</string>
+    <string name="phone_control_ready">Ready</string>
+    <string name="phone_control_not_ready">Not connected or initializing</string>
+    <string name="phone_control_terminal">Open terminal</string>
+    <string name="phone_control_default">Use Termux as default runtime</string>
+    <string name="phone_control_storage">Shared storage permission</string>
+    <string name="phone_control_developer_settings">Developer settings</string>
+    <string name="phone_control_install_adb">Check bundled ADB</string>
+    <string name="phone_control_pair_endpoint">Pairing address (IPv4:port)</string>
+    <string name="phone_control_pair_code">Six-digit pairing code</string>
+    <string name="phone_control_pair">Pair</string>
+    <string name="phone_control_connect_endpoint">Connection address (IPv4:port)</string>
+    <string name="phone_control_connect">Connect</string>
+    <string name="phone_control_disconnect">Disconnect</string>
+    <string name="phone_control_accessibility">Accessibility</string>
+    <string name="phone_control_accessibility_settings">Accessibility settings</string>
+    <string name="phone_control_accessibility_description">When enhanced AI phone control is enabled in Andex, this service can read visible screen content and perform taps, swipes, text entry, navigation, and screenshots. Screen content may be sent to the model provider you select. It does not grant root or ADB privileges.</string>
+    <string name="termux_embedded_start_failed">Embedded Termux failed to start</string>
+    <string name="termux_embedded_retry_description">Status is checked automatically when you return. See the startup error below or refresh to retry.</string>
+    <string name="agent_phone_control_title">Control this phone · Accessibility / ADB</string>
+    <string name="agent_phone_control_description">Available to the agent in all chats. Granted accessibility and connected ADB can be used directly, without root or Shizuku. Termux opens apps through Andex’s native identity. System permission and ADB pairing must be completed by you.</string>
+    <string name="agent_phone_control_configure">Configure accessibility and wireless ADB</string>
+</resources>

@@ -1,7 +1,7 @@
 //
 //  ANSIParser.swift
 //  MinisApp
-//  Adapted for Aether from OpenMinis (GPL-3.0).
+//  Adapted for Andex from OpenMinis (GPL-3.0).
 //
 //  VT100/xterm escape sequence parser (state machine)
 //

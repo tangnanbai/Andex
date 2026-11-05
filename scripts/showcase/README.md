@@ -1,14 +1,14 @@
-# Aether Film Sessions
+# Andex Film Sessions
 
 These are scripted, offline film fixtures. Tool commands, model names, elapsed
 times, and completion claims are simulated. Nothing in the fixture executes SSH,
 root repair, model requests, or website deployment.
 
-Android uses the existing `demo` build type, app name `Aether Showcase`, and
-application ID `com.baimoqilin.aether.showcase`. The stable application remains
+Android uses the existing `demo` build type, app name `Andex Showcase`, and
+application ID `com.android.andex.showcase`. The stable application remains
 installed independently. Build with `./gradlew :app:assembleDemo --no-daemon`.
 
-iOS opts in only when `Documents/aether-showcase-enabled` exists in its app data
+iOS opts in only when `Documents/andex-showcase-enabled` exists in its app data
 container. The marker is not bundled. Existing conversations are retained. On both
 platforms, the scripted conversations restore their complete contents at launch,
 including updated attachments, while retaining their selected model. Remove the
@@ -42,7 +42,7 @@ user prompt; no live provider credential is configured.
 ## Filming controls
 
 Open a Chinese or English conversation from the sidebar. On Android, launch
-**Aether Showcase**, not the separately installed Aether app. Its model selector
+**Andex Showcase**, not the separately installed Andex app. Its model selector
 contains `gpt-6-astra`, `gemini-3.8-flash`, and `claude-fable-5.1`.
 
 Use the play button beside New Chat, then **Replay from beginning**. **Pause** and
@@ -52,8 +52,8 @@ replay; choose 0.5x for close-ups or 5x for a quick complete run.
 
 For the tool-detail shot, expand **Working for ...**, then **Executed ... tools**,
 then open one of the first eight calls. These contain authored arguments and
-outputs. The website conversations, **把 Aether 放上项目页** and
-**Aether on the Projects page**, each have eight prompts for the conversation
+outputs. The website conversations, **把 Andex 放上项目页** and
+**Andex on the Projects page**, each have eight prompts for the conversation
 timeline. The screenshots and translation-extension prompts display their skill
 badges; the screenshot prompt has three copies of the same reference image.
 
@@ -63,9 +63,9 @@ the complete scripted transcripts; other conversations are preserved.
 
 ## Verified on 2026-09-13
 
-- Android `PJA110`: `com.baimoqilin.aether.showcase`, version 2.1.6 (11),
-  14 scripted sessions; the original Aether package remains installed.
-- iPad Air (5th generation): `com.baimoqilin.aether`, version 2.1.6 (20),
+- Android `PJA110`: `com.android.andex.showcase`, version 2.1.6 (11),
+  14 scripted sessions; the original Andex package remains installed.
+- iPad Air (5th generation): `com.android.andex`, version 2.1.6 (20),
   12 scripted sessions.
 - iPhone 17 Pro Simulator: iOS 26.5, version 2.1.6 (20), 12 scripted sessions.
 - All 227 Android Demo unit tests pass. Both catalogs pass turn, tool-detail,

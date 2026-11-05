@@ -5,11 +5,11 @@ import type { McpOAuthRuntime } from "./mcp-auth-flow.ts";
 import { Type } from "typebox";
 import type { TSchema } from "typebox";
 import {
-  registerMcpAetherBridge,
-  type McpAetherBridge,
-  type McpAetherServerSnapshot,
-  type McpAetherSnapshot,
-} from "./aether-bridge.ts";
+  registerMcpAndexBridge,
+  type McpAndexBridge,
+  type McpAndexServerSnapshot,
+  type McpAndexSnapshot,
+} from "./andex-bridge.ts";
 import { showStatus, showTools, showPrompts, reconnectServer, reconnectServers, authenticateServer, logoutServer, openMcpAuthPanel, openMcpPanel, openMcpSetup } from "./commands.ts";
 import { cloneMcpConfig, getPiGlobalConfigPath, loadMcpConfig, writeProjectServerDisabledOverride } from "./config.ts";
 import { buildProxyDescription, createDirectToolExecutor, getMissingConfiguredDirectToolServers, resolveDirectTools } from "./direct-tools.ts";
@@ -74,7 +74,7 @@ function optionalNumber(options: { minimum?: number; description: string }): TSc
 function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
   const sessionConfig = options.config !== undefined ? cloneMcpConfig(options.config) : undefined;
   const programmaticConfig = sessionConfig !== undefined;
-  let aetherBridge: McpAetherBridge | null = null;
+  let andexBridge: McpAndexBridge | null = null;
   let activeSessionContext: ExtensionContext | null = null;
   let state: McpExtensionState | null = null;
   let initPromise: Promise<McpExtensionState> | null = null;
@@ -334,7 +334,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       syncPromptCommands();
       syncToolSurface(ctx);
       updateStatusBar(nextState);
-      aetherBridge?.onStatusChanged?.();
+      andexBridge?.onStatusChanged?.();
       initPromise = null;
       if (earlyConfig.settings?.freezeDirectTools === true) {
         directToolsFrozen = true;
@@ -936,7 +936,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     } as unknown as ExtensionContext;
   }
 
-  function bridgeSnapshot(): McpAetherSnapshot {
+  function bridgeSnapshot(): McpAndexSnapshot {
     const status: McpStatusSnapshot = state
       ? createMcpStatusSnapshot(state)
       : {
@@ -952,7 +952,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
           connectedCount: 0,
           disabledCount: Object.values(earlyConfig.mcpServers).filter((definition) => definition.disabled === true).length,
         };
-    const servers: McpAetherServerSnapshot[] = status.servers.map((server) => ({
+    const servers: McpAndexServerSnapshot[] = status.servers.map((server) => ({
       name: server.name,
       status: server.status,
       toolCount: server.toolCount,
@@ -972,7 +972,7 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
     };
   }
 
-  const bridge: McpAetherBridge = {
+  const bridge: McpAndexBridge = {
     getSnapshot: bridgeSnapshot,
     async inspect(serverName, operation) {
       const currentState = await ensureBridgeState();
@@ -1102,8 +1102,8 @@ function installMcpAdapter(pi: ExtensionAPI, options: McpAdapterOptions) {
       return { ok: true, message: "Pi extensions are reloading with the updated MCP config." };
     },
   };
-  aetherBridge = bridge;
-  registerMcpAetherBridge(bridge);
+  andexBridge = bridge;
+  registerMcpAndexBridge(bridge);
   const bridgeEvents = (pi as ExtensionAPI & { events?: ExtensionAPI["events"] }).events;
   bridgeEvents?.on?.(MCP_STATUS_EVENT, () => bridge.onStatusChanged?.());
 

@@ -1,0 +1,7 @@
+{
+  "name": "pi-long-memory",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Andex 长效记忆：持久用户资料和经验笔记，默认启用",
+  "andex": { "api": 2, "extensions": ["./andex.ts"] }
+}

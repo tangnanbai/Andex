@@ -1,0 +1,396 @@
+package com.android.andex.data.pi
+
+import com.android.andex.data.AppSettings
+import com.android.andex.data.AndexLlmUserAgent
+import com.android.andex.data.LlmCustomHeader
+import com.android.andex.data.LlmImagePart
+import com.android.andex.data.LlmMessage
+import com.android.andex.data.LlmTextPart
+import com.android.andex.data.LlmTokenUsage
+import com.android.andex.data.ProviderAuthMethod
+import org.json.JSONObject
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class PiProviderMapperTest {
+    @Test fun manualContextLengthOverridesCatalogLimit() {
+        val config = AppSettings(contextWindow = 256_000).toPiModelConfig(
+            modelsDevLimits = com.android.andex.data.ModelsDevModelLimits(contextWindow = 128_000),
+            modelsDevThinkingLevels = listOf("off"),
+        )
+        assertEquals(256_000, config.contextWindow)
+        assertEquals(256_000, config.toJson().getJSONObject("models_dev").getInt("context_window"))
+    }
+    @Test
+    fun customFormatsMapToTheirSelectedPiApi() {
+        mapOf(
+            "openai-compatible" to "openai-completions",
+            "openai-responses-custom" to "openai-responses",
+            "anthropic-custom" to "anthropic-messages",
+        ).forEach { (provider, api) ->
+            val model = AppSettings(
+                piProviderId = provider, providerConfigId = "custom-test",
+                baseUrl = "https://example.test/v1", modelId = "manual-model",
+            ).toPiModelConfig()
+            assertEquals("custom", model.providerType)
+            assertEquals(api, model.piApi)
+        }
+    }
+    @Test
+    fun serviceTierIsTrimmedAndBlankIsOmitted() {
+        assertFalse(AppSettings().toPiModelConfig().toJson().has("service_tier"))
+        assertFalse(AppSettings(serviceTier = "  ").toPiModelConfig().toJson().has("service_tier"))
+        for (tier in listOf("fast", "ultrafast", "priority")) {
+            val config = AppSettings(serviceTier = " $tier ").toPiModelConfig().toJson()
+            assertEquals(tier, config.getString("service_tier"))
+        }
+    }
+
+    @Test
+    fun builtInOpenAiMapsDirectlyToPiCatalog() {
+        val config = AppSettings(
+            providerConfigId = "openai-config",
+            piProviderId = "openai",
+            apiKey = "sk-test",
+            baseUrl = "https://api.openai.com/v1",
+            modelId = "gpt-5.4",
+        ).toPiModelConfig()
+
+        assertEquals("builtin", config.providerType)
+        assertEquals("openai-config", config.providerConfigId)
+        assertEquals("openai-config", config.toJson().getString("provider_config_id"))
+        assertEquals("openai", config.piProviderId)
+        assertEquals("builtin", config.piApi)
+        assertEquals("gpt-5.4", config.modelId)
+        assertEquals("sk-test", config.apiKey)
+        assertFalse(config.reasoning)
+        assertEquals("high", AppSettings(
+            piProviderId = "openai",
+            modelId = "gpt-5.4",
+            reasoningEffort = "high",
+        ).toPiThinkingLevel())
+    }
+
+    @Test
+    fun maxReasoningEffortPassesThroughToPi() {
+        assertEquals("max", AppSettings(
+            piProviderId = "openai",
+            modelId = "gpt-5.6-luna",
+            reasoningEffort = "max",
+        ).toPiThinkingLevel())
+    }
+
+    @Test
+    fun unknownBuiltInModelStillPassesSelectedLevelToPi() {
+        assertEquals("high", AppSettings(
+            piProviderId = "openai",
+            modelId = "future-reasoning-model",
+            reasoningEffort = "high",
+        ).toPiThinkingLevel())
+    }
+
+    @Test
+    fun customModelEnablesReasoningWhenTheSelectedEffortRequiresIt() {
+        val config = AppSettings(
+            piProviderId = "openai-compatible",
+            providerConfigId = "custom-provider-id",
+            baseUrl = "https://example.test/v1",
+            modelId = "custom-model",
+            reasoningEffort = "high",
+        ).toPiModelConfig()
+
+        assertTrue(config.reasoning)
+        assertEquals("high", AppSettings(
+            piProviderId = "openai-compatible",
+            modelId = "custom-model",
+            reasoningEffort = "high",
+        ).toPiThinkingLevel())
+    }
+
+    @Test
+    fun developerRoleCompatibilityOverrideIsSentOnlyAfterDetection() {
+        val automatic = AppSettings(
+            piProviderId = "openai-compatible",
+            providerConfigId = "automatic",
+            baseUrl = "https://example.test/v1",
+            modelId = "model",
+        ).toPiModelConfig().toJson()
+        val marked = AppSettings(
+            piProviderId = "openai-compatible",
+            providerConfigId = "marked",
+            baseUrl = "https://example.test/v1",
+            modelId = "model",
+            developerRoleUnsupported = true,
+        ).toPiModelConfig().toJson()
+
+        assertFalse(automatic.has("supports_developer_role"))
+        assertFalse(marked.getBoolean("supports_developer_role"))
+    }
+
+    @Test
+    fun compatibilityModeIsSentOnlyForCustomProvider() {
+        val custom = AppSettings(
+            piProviderId = "openai-compatible",
+            providerConfigId = "custom",
+            baseUrl = "https://example.test/v1",
+            modelId = "model",
+            compatibilityMode = true,
+        ).toPiModelConfig().toJson()
+        val builtIn = AppSettings(
+            piProviderId = "openai",
+            providerConfigId = "openai",
+            baseUrl = "https://api.openai.com/v1",
+            modelId = "gpt-5.4",
+            compatibilityMode = true,
+        ).toPiModelConfig().toJson()
+
+        assertTrue(custom.getBoolean("compatibility_mode"))
+        assertFalse(builtIn.has("compatibility_mode"))
+    }
+
+    @Test
+    fun legacyNoneReasoningEffortMigratesToPiOff() {
+        assertEquals("off", AppSettings(
+            piProviderId = "openai",
+            modelId = "gpt-5.4",
+            reasoningEffort = "none",
+        ).toPiThinkingLevel())
+    }
+
+    @Test
+    fun anthropicMapsToBuiltInPiProvider() {
+        val config = AppSettings(
+            piProviderId = "anthropic",
+            apiKey = "anthropic-key",
+            baseUrl = "https://api.anthropic.com/v1",
+            modelId = "claude-sonnet-4-5",
+        ).toPiModelConfig()
+
+        assertEquals("builtin", config.providerType)
+        assertEquals("anthropic", config.piProviderId)
+        assertEquals("builtin", config.piApi)
+    }
+
+    @Test
+    fun vertexMapsToPiGoogleVertex() {
+        val config = AppSettings(
+            piProviderId = "google-vertex",
+            apiKey = "vertex-key",
+            baseUrl = "https://aiplatform.googleapis.com/v1",
+            modelId = "gemini-2.5-flash",
+            providerAuthMethod = ProviderAuthMethod.ApiKey,
+        ).toPiModelConfig()
+
+        assertEquals("builtin", config.providerType)
+        assertEquals("google-vertex", config.piProviderId)
+        assertEquals("builtin", config.piApi)
+        assertEquals("vertex-key", config.apiKey)
+        assertEquals(ProviderAuthMethod.ApiKey, config.authMethod)
+    }
+
+    @Test
+    fun oauthAndAmbientProvidersDoNotForwardStaleApiKeys() {
+        val oauth = AppSettings(
+            piProviderId = "openai-codex",
+            apiKey = "legacy-openai-key",
+            providerAuthMethod = ProviderAuthMethod.OAuth,
+        ).toPiModelConfig()
+        val ambient = AppSettings(
+            piProviderId = "amazon-bedrock",
+            apiKey = "legacy-aws-key",
+            providerAuthMethod = ProviderAuthMethod.Ambient,
+        ).toPiModelConfig()
+
+        assertEquals("", oauth.apiKey)
+        assertEquals("", ambient.apiKey)
+    }
+
+    @Test
+    fun openAiCompatibleMapsToCustomOpenAiCompletionsProvider() {
+        val config = AppSettings(
+            piProviderId = "openai-compatible",
+            providerConfigId = "custom-provider-id",
+            apiKey = "custom-key",
+            baseUrl = "https://example.test/v1",
+            modelId = "custom-model",
+            userAgent = "CustomAgent/3.0",
+            customHeaders = listOf(
+                LlmCustomHeader("X-Test", "yes"),
+                LlmCustomHeader("User-Agent", "ignored"),
+                LlmCustomHeader(" ", "ignored"),
+            ),
+        ).toPiModelConfig()
+
+        assertEquals("custom", config.providerType)
+        assertTrue(config.piProviderId.startsWith("andex-"))
+        assertEquals("openai-completions", config.piApi)
+        assertEquals(
+            mapOf(
+                "X-Test" to "yes",
+                "User-Agent" to "CustomAgent/3.0",
+            ),
+            config.customHeaders,
+        )
+        assertEquals("custom-model", config.modelId)
+        assertFalse(config.reasoning)
+        assertEquals("off", AppSettings(
+            piProviderId = "openai-compatible",
+            modelId = "custom-model",
+        ).toPiThinkingLevel())
+        assertEquals(
+            AndexLlmUserAgent,
+            AppSettings(
+                piProviderId = "openai-compatible",
+                providerConfigId = "default-agent",
+                baseUrl = "https://example.test/v1",
+                modelId = "custom-model",
+            ).toPiModelConfig().customHeaders["User-Agent"],
+        )
+    }
+
+    @Test
+    fun llmMessagesMapToPiJsonWithTextAndImages() {
+        val json = listOf(
+            LlmMessage(
+                role = "user",
+                contentParts = listOf(
+                    LlmTextPart("hello"),
+                    LlmImagePart("image/png", "abc123"),
+                ),
+            )
+        ).toPiJson()
+
+        val message = json.getJSONObject(0)
+        assertEquals("user", message.optString("role"))
+        val content = message.getJSONArray("content")
+        assertEquals("text", content.getJSONObject(0).optString("type"))
+        assertEquals("hello", content.getJSONObject(0).optString("text"))
+        assertEquals("image", content.getJSONObject(1).optString("type"))
+        assertEquals("image/png", content.getJSONObject(1).optString("mime_type"))
+        assertEquals("abc123", content.getJSONObject(1).optString("data"))
+        assertFalse(message.has("provider_payload"))
+    }
+
+    @Test
+    fun piAssistantPayloadIsWrappedForRoomReplay() {
+        val assistantMessage = JSONObject().apply {
+            put("role", "assistant")
+            put("content", org.json.JSONArray().put(
+                JSONObject().put("type", "text").put("text", "done")
+            ))
+        }
+        val payload = PiCompletionResult(
+            assistantText = "done",
+            assistantMessage = assistantMessage,
+            usage = LlmTokenUsage(
+                inputTokens = 3,
+                outputTokens = 2,
+                totalTokens = 5,
+                cachedInputTokens = 1,
+                cacheWriteTokens = 4,
+                outputDurationMillis = 2_500,
+            ),
+            provider = "openai",
+            model = "gpt-5.4",
+            responseId = "resp-1",
+            stopReason = "stop",
+        ).toProviderPayloadJson()
+        val wrapped = JSONObject(payload)
+
+        assertEquals("assistant", wrapped.getJSONObject("piAssistantMessage").getString("role"))
+        assertEquals("openai", wrapped.getString("provider"))
+        assertEquals("resp-1", wrapped.getString("responseId"))
+        assertEquals(5L, wrapped.getJSONObject("usage").getLong("total_tokens"))
+        assertEquals(4L, wrapped.getJSONObject("usage").getLong("cache_write_tokens"))
+        assertEquals(2_500L, wrapped.getJSONObject("usage").getLong("output_duration_ms"))
+    }
+
+    @Test
+    fun piUsageKeepsCacheReadAndWriteTokens() {
+        val usage = JSONObject()
+            .put(
+                "usage",
+                JSONObject()
+                    .put("input_tokens", 10)
+                    .put("output_tokens", 4)
+                    .put("total_tokens", 14)
+                    .put("cached_input_tokens", 6)
+                    .put("cache_write_tokens", 2)
+                    .put("output_duration_ms", 2_500)
+                    .put("request_count", 3),
+            )
+            .toPiCompletionResult()
+            .usage!!
+
+        assertEquals(6L, usage.cachedInputTokens)
+        assertEquals(2L, usage.cacheWriteTokens)
+        assertEquals(2_500L, usage.outputDurationMillis)
+        assertEquals(3, usage.requestCount)
+
+        val replayed = JSONObject(
+            PiCompletionResult(assistantText = "", usage = usage).toProviderPayloadJson(),
+        )
+            .getJSONObject("usage")
+        assertEquals(6L, replayed.getLong("cached_input_tokens"))
+        assertEquals(2L, replayed.getLong("cache_write_tokens"))
+        assertEquals(2_500L, replayed.getLong("output_duration_ms"))
+        assertEquals(3, replayed.getInt("request_count"))
+    }
+
+    @Test
+    fun customModelEnablesReasoningWhenThinkingLevelMapMapsOffToNone() {
+        val config = AppSettings(
+            piProviderId = "openai-compatible",
+            providerConfigId = "custom-provider-id",
+            baseUrl = "https://example.test/v1",
+            modelId = "gpt-5.3-codex-spark",
+            reasoningEffort = "off",
+        ).toPiModelConfig(
+            thinkingLevelMap = mapOf("off" to "none"),
+            isReasoningModel = true,
+        )
+
+        assertTrue(config.reasoning)
+        assertEquals(mapOf("off" to "none"), config.thinkingLevelMap)
+        assertEquals("none", config.toJson().getJSONObject("thinking_level_map").getString("off"))
+    }
+
+    @Test
+    fun knownReasoningModelKeepsItsCapabilityWhenOffUsesANativeDisableDirective() {
+        val config = AppSettings(
+            piProviderId = "anthropic",
+            modelId = "claude-sonnet-5",
+            reasoningEffort = "off",
+        ).toPiModelConfig(isReasoningModel = true)
+
+        assertTrue(config.reasoning)
+        assertTrue(config.thinkingLevelMap.isEmpty())
+    }
+
+    @Test
+    fun modelsDevCapabilitiesAreSentToPi() {
+        val json = AppSettings(
+            piProviderId = "openai-compatible",
+            baseUrl = "https://relay.example/v1",
+            modelId = "muse-spark-1.3",
+            reasoningEffort = "max",
+        ).toPiModelConfig(
+            isReasoningModel = true,
+            modelsDevThinkingLevels = listOf("minimal", "low", "medium", "high", "xhigh", "max"),
+            modelsDevLimits = com.android.andex.data.ModelsDevModelLimits(1_048_576, 131_072, true),
+        ).toJson()
+
+        val modelsDev = json.getJSONObject("models_dev")
+        assertEquals(true, modelsDev.getBoolean("reasoning"))
+        assertEquals("max", modelsDev.getJSONArray("thinking_levels").getString(5))
+        assertEquals(1_048_576, modelsDev.getInt("context_window"))
+        assertEquals(131_072, modelsDev.getInt("max_tokens"))
+        assertEquals("image", modelsDev.getJSONArray("input").getString(1))
+        assertEquals(1_048_576, json.getInt("context_window"))
+        assertFalse(
+            AppSettings(piProviderId = "openai", modelId = "gpt-5.4").toPiModelConfig().toJson().has("models_dev"),
+        )
+    }
+}

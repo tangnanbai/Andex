@@ -1,29 +1,29 @@
-# @baimoqilin/aether-extension-api
+# @tangnanbai/andex-extension-api
 
-TypeScript declarations for Aether Script Extensions.
+TypeScript declarations for Andex Script Extensions.
 
 ```bash
-npm install --save-dev @baimoqilin/aether-extension-api
+npm install --save-dev @tangnanbai/andex-extension-api
 ```
 
 ```ts
-import { defineAetherExtension, ui } from "@baimoqilin/aether-extension-api";
+import { defineAndexExtension, ui } from "@tangnanbai/andex-extension-api";
 
-export const activateAether = defineAetherExtension((aether) => {
-  aether.registerSurface("chat.composer.top", {
-    render: () => ui.text("Hello from Aether"),
+export const activateAndex = defineAndexExtension((andex) => {
+  andex.registerSurface("chat.composer.top", {
+    render: () => ui.text("Hello from Andex"),
   });
 });
 ```
 
 Extensions register data-only settings schemas. This is the only native page
-registration API; extensions cannot create full-screen or drawer pages. Aether renders settings with the
+registration API; extensions cannot create full-screen or drawer pages. Andex renders settings with the
 same scaffold, cards, spacing, typography, and controls as its built-in
 Settings pages, in a dedicated group between Reliability and Agent Skills.
 Values are stored per extension, page, and setting and restored across reloads:
 
 ```ts
-aether.registerSettings({
+andex.registerSettings({
   id: "preferences",
   title: "Preferences",
   sections: [{
@@ -44,7 +44,7 @@ Settings may optionally contain child categories. The host shows the category
 list first and then renders the selected category with the same native controls:
 
 ```ts
-aether.registerSettings({
+andex.registerSettings({
   id: "preferences",
   title: "Preferences",
   categories: [
@@ -62,13 +62,13 @@ or other page-level styling.
 The chat composer plus menu and transcript support extension-owned entries:
 
 ```ts
-aether.registerComposerMenuItem({
+andex.registerComposerMenuItem({
   id: "summarize",
   title: "Summarize thread",
   icon: "auto",
   action: "summarize",
 });
-aether.registerMessageType({
+andex.registerMessageType({
   type: "summary",
   title: "Summary",
   render: ({ message }) => ui.card([
@@ -76,12 +76,12 @@ aether.registerMessageType({
     ui.text(String(message.body ?? ""), { color: "muted" }),
   ]),
 });
-aether.registerAction("show-summary", () =>
-  aether.messages.append("summary", { title: "Done", body: "Thread summarized." }));
+andex.registerAction("show-summary", () =>
+  andex.messages.append("summary", { title: "Done", body: "Thread summarized." }));
 ```
 
-This package intentionally contains declarations only. Aether injects the
+This package intentionally contains declarations only. Andex injects the
 runtime implementation when it loads an Extension.
 
-The npm package major version matches `aether.apiVersion`. Package `2.x`
+The npm package major version matches `andex.apiVersion`. Package `2.x`
 describes Script API version 2.

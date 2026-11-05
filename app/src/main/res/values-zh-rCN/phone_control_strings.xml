@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="phone_control_title">手机控制</string>
+    <string name="phone_control_summary">ADB / 无障碍</string>
+    <string name="termux_automatic_storage">Termux 自动准备就绪。首次启动授予 Andex 存储权限后，可直接通过 ~/storage 访问共享文件。</string>
+    <string name="termux_embedded_description">Andex 内置 Termux，首次启动自动准备。在这里管理终端和环境变量。</string>
+    <string name="root_setup_embedded_termux_subtitle">准备并验证内置 Termux，无需安装外部应用。</string>
+    <string name="phone_control_back">返回</string>
+    <string name="phone_control_refresh">刷新状态</string>
+    <string name="phone_control_ai_enabled">允许 AI 控制屏幕和剪贴板</string>
+    <string name="phone_control_allow_title">允许增强手机控制？</string>
+    <string name="phone_control_allow_message">AI 工具可以访问剪贴板，并通过你已授权的 ADB 或无障碍连接读取和操作真实屏幕。屏幕及剪贴板内容可能发送给你选择的模型服务商。关闭此开关可撤销这些能力；普通 Termux 命令仍然可用。</string>
+    <string name="phone_control_allow">允许</string>
+    <string name="phone_control_embedded">使用内置 Termux</string>
+    <string name="phone_control_ready">已就绪</string>
+    <string name="phone_control_not_ready">未连接或正在初始化</string>
+    <string name="phone_control_terminal">打开终端</string>
+    <string name="phone_control_default">设为默认运行时</string>
+    <string name="phone_control_storage">共享存储权限</string>
+    <string name="phone_control_developer_settings">开发者选项</string>
+    <string name="phone_control_install_adb">检查内置 ADB</string>
+    <string name="phone_control_pair_endpoint">配对地址（IPv4:端口）</string>
+    <string name="phone_control_pair_code">六位配对码</string>
+    <string name="phone_control_pair">配对</string>
+    <string name="phone_control_connect_endpoint">连接地址（IPv4:端口）</string>
+    <string name="phone_control_connect">连接</string>
+    <string name="phone_control_disconnect">断开</string>
+    <string name="phone_control_accessibility">无障碍</string>
+    <string name="phone_control_accessibility_settings">无障碍设置</string>
+    <string name="phone_control_accessibility_description">在 Andex 中启用增强 AI 手机控制后，此服务可以读取可见屏幕，执行点击、滑动、输入文字、系统导航和截图。屏幕内容可能发送给你选择的模型服务商。此服务不会授予 Root 或 ADB 权限。</string>
+    <string name="termux_embedded_start_failed">内置 Termux 启动失败</string>
+    <string name="termux_embedded_retry_description">返回后会自动检测。请查看下方启动错误，或点击刷新重试。</string>
+    <string name="agent_phone_control_title">本机控制 · 无障碍 / ADB</string>
+    <string name="agent_phone_control_description">所有会话都可直接调用。已授权的无障碍和已连接的 ADB 无需 Root 或 Shizuku。Termux 通过 Andex 本身身份启动应用。系统授权和 ADB 配对需要你完成。</string>
+    <string name="agent_phone_control_configure">配置无障碍与无线 ADB</string>
+</resources>

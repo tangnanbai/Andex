@@ -8,18 +8,18 @@
 
 ## About this repository
 
-This is the **Aether-enabled fork** of [pi-web-access](https://github.com/nicobailon/pi-web-access) by the [Aether](https://aether.baimoqilin.com) team. It tracks the upstream project and adds first-class support for running inside Aether, the mobile AI agent built on the Pi Coding Agent core:
+This is the **Andex-enabled fork** of [pi-web-access](https://github.com/nicobailon/pi-web-access) by the [Andex](https://andex.baimoqilin.com) team. It tracks the upstream project and adds first-class support for running inside Andex, the mobile AI agent built on the Pi Coding Agent core:
 
-- **Aether Script Mod** (`aether.ts`) — a native Settings page organized into sub-pages (categories) so provider credentials, extraction, and privacy options are configured per provider without dumping everything at once.
-- **Aether message renderers** — web-search completion, errors, curator, and Gemini account events appear as cards in the Aether transcript.
+- **Andex Script Mod** (`andex.ts`) — a native Settings page organized into sub-pages (categories) so provider credentials, extraction, and privacy options are configured per provider without dumping everything at once.
+- **Andex message renderers** — web-search completion, errors, curator, and Gemini account events appear as cards in the Andex transcript.
 
-The upstream project remains the source of truth for provider support and Pi-side behavior; this repository layers the Aether UI and runtime integration on top and stays rebased on upstream releases.
+The upstream project remains the source of truth for provider support and Pi-side behavior; this repository layers the Andex UI and runtime integration on top and stays rebased on upstream releases.
 
-## Aether integration
+## Andex integration
 
-When installed in Aether, this package loads a Script Extension (no Native Mod required). The Script Extension adds a single native settings page whose first level shows the **Web search tools** master toggle card directly above the sub-page (category) list: **Provider**, **Context Extraction**, and **Privacy and network**. The Provider sub-page has two cards: **Provider** — the default search provider followed by that provider's **API Key** (a masked password field showing the currently configured value) and **Base URL** (optional endpoint or gateway override), then any provider-specific options; switching the default provider swaps the key and base URL fields to the corresponding provider, and providers without a key simply don't show one — and **Advanced** — routing, review workflow, curator timeout, and summary model. Context Extraction is split into **GitHub**, **YouTube**, and **PDF** cards. Settings are written atomically to the same `web-search.json` used by Pi, while unrelated fields are preserved; numeric limits are entered directly instead of with sliders. (The first-level master toggle requires the Aether 2.1.3+ build that renders page-level setting cards on extension settings pages.)
+When installed in Andex, this package loads a Script Extension (no Native Mod required). The Script Extension adds a single native settings page whose first level shows the **Web search tools** master toggle card directly above the sub-page (category) list: **Provider**, **Context Extraction**, and **Privacy and network**. The Provider sub-page has two cards: **Provider** — the default search provider followed by that provider's **API Key** (a masked password field showing the currently configured value) and **Base URL** (optional endpoint or gateway override), then any provider-specific options; switching the default provider swaps the key and base URL fields to the corresponding provider, and providers without a key simply don't show one — and **Advanced** — routing, review workflow, curator timeout, and summary model. Context Extraction is split into **GitHub**, **YouTube**, and **PDF** cards. Settings are written atomically to the same `web-search.json` used by Pi, while unrelated fields are preserved; numeric limits are entered directly instead of with sliders. (The first-level master toggle requires the Andex 2.1.3+ build that renders page-level setting cards on extension settings pages.)
 
-Aether renders web-search completion, background-content, error, curator, and Gemini account events as custom message cards. A compact latest-activity card remains available at the transcript end for Aether builds whose Android custom-message renderer is not yet active. The Script Mod also registers semantic running and completed titles for the four default tools on Aether builds that support `aether.registerToolTitle`; older Aether builds keep the built-in fallback titles. Script changes hot-reload without restarting Aether.
+Andex renders web-search completion, background-content, error, curator, and Gemini account events as custom message cards. A compact latest-activity card remains available at the transcript end for Andex builds whose Android custom-message renderer is not yet active. The Script Mod also registers semantic running and completed titles for the four default tools on Andex builds that support `andex.registerToolTitle`; older Andex builds keep the built-in fallback titles. Script changes hot-reload without restarting Andex.
 
 [![npm version](https://img.shields.io/npm/v/pi-web-access?style=for-the-badge)](https://www.npmjs.com/package/pi-web-access)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](https://opensource.org/licenses/MIT)
@@ -45,9 +45,9 @@ https://github.com/user-attachments/assets/cac6a17a-1eeb-4dde-9818-cdf85d8ea98f
 pi install npm:pi-web-access
 ```
 
-### In Aether
+### In Andex
 
-Download the release package from the [Releases page](https://github.com/AetherExtensions/pi-web-access/releases) of this repository, then import it in Aether via **Settings → Extensions → Import extension**. The package includes the Pi extension and the Aether Script Mod in one zip; Script updates hot-reload without restarting Aether.
+Download the release package from the [Releases page](https://github.com/AndexExtensions/pi-web-access/releases) of this repository, then import it in Andex via **Settings → Extensions → Import extension**. The package includes the Pi extension and the Andex Script Mod in one zip; Script updates hot-reload without restarting Andex.
 
 Works immediately with no API keys — Exa MCP provides zero-config search. If Pi has Codex auth from `/login`, OpenAI search can also work without a separate key. For more providers or direct API access, add keys to `~/.pi/web-search.json`:
 

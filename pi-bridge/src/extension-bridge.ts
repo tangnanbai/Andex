@@ -3,12 +3,12 @@ import { flushCompileCache } from "node:module";
 import { createInterface } from "node:readline";
 import { stdin as input, stderr } from "node:process";
 import {
-  aetherAppExtensionSnapshot,
-  configureAetherExtensionTransport,
-  dispatchAetherAppExtensionEvent,
-  invokeAetherAppExtensionAction,
-  loadAetherAppExtensions,
-} from "./aether-extensions.js";
+  andexAppExtensionSnapshot,
+  configureAndexExtensionTransport,
+  dispatchAndexAppExtensionEvent,
+  invokeAndexAppExtensionAction,
+  loadAndexAppExtensions,
+} from "./andex-extensions.js";
 import {
   installExtensionPackage,
   listDiscoveredSkills,
@@ -17,28 +17,22 @@ import {
   updateExtensionPackage,
 } from "./extension-packages.js";
 import { reserveProtocolStdout, writeProtocolFrame } from "./protocol-output.js";
-
 reserveProtocolStdout();
-
 const BRIDGE_VERSION = "2.0.0-alpha.0";
-const PI_AI_VERSION = "0.85.1";
-const PI_AGENT_CORE_VERSION = "0.85.1";
-const PI_CODING_AGENT_VERSION = "0.85.1";
-
+const PI_AI_VERSION = "1.3.0";
+const PI_AGENT_CORE_VERSION = "1.3.0";
+const PI_CODING_AGENT_VERSION = "1.3.0";
 type JsonObject = Record<string, unknown>;
-
 interface BridgeRequest {
   id?: string;
   type?: string;
   payload?: JsonObject;
 }
-
 interface PendingHostCall {
   resolve: (result: JsonObject) => void;
   reject: (error: Error) => void;
   timeout: NodeJS.Timeout;
 }
-
 const subscriberRequestIds = new Set<string>();
 const operationContext = new AsyncLocalStorage<string>();
 const activeOperationRequestIds = new Set<string>();
@@ -49,43 +43,34 @@ let currentLoadOptions = {
   disabledExtensionPaths: [] as string[],
   disabledPackageSources: [] as string[],
 };
-
 function asObject(value: unknown): JsonObject {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as JsonObject
     : {};
 }
-
 function asString(value: unknown, fallback = ""): string {
   return typeof value === "string" ? value : fallback;
 }
-
 function asBoolean(value: unknown, fallback = false): boolean {
   return typeof value === "boolean" ? value : fallback;
 }
-
 function stringArray(value: unknown): string[] {
   return Array.isArray(value)
     ? value.filter((entry): entry is string => typeof entry === "string")
     : [];
 }
-
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
-
 function writeFrame(frame: JsonObject): void {
   writeProtocolFrame(frame);
 }
-
 function writeEvent(id: string, event: string, payload: JsonObject = {}): void {
   writeFrame({ type: "event", id, event, payload });
 }
-
 function writeResponse(id: string, payload: JsonObject = {}): void {
   writeFrame({ type: "response", id, ok: true, payload });
 }
-
 function writeError(id: string | undefined, error: unknown, code = "bridge_error"): void {
   writeFrame({
     type: "error",
@@ -94,7 +79,6 @@ function writeError(id: string | undefined, error: unknown, code = "bridge_error
     error: { code, message: errorMessage(error) },
   });
 }
-
 function flushStartupCompileCache(): void {
   if (compileCacheFlushed) return;
   compileCacheFlushed = true;
@@ -104,28 +88,25 @@ function flushStartupCompileCache(): void {
     // Compile caching is an optimization and must not affect bridge requests.
   }
 }
-
 function emitSubscriberEvent(event: string, payload: JsonObject = {}): void {
   for (const requestId of subscriberRequestIds) writeEvent(requestId, event, payload);
 }
-
 function requestHost(method: string, args: JsonObject): Promise<JsonObject> {
   const operationRequestId = operationContext.getStore();
   const requestId = operationRequestId && activeOperationRequestIds.has(operationRequestId)
     ? operationRequestId
     : subscriberRequestIds.values().next().value;
-  if (!requestId) throw new Error("The Aether app host is not subscribed.");
-  const callId = `aether-host-${Date.now()}-${++hostCallCounter}`;
-  writeEvent(requestId, "aether_host_call", { call_id: callId, method, args });
+  if (!requestId) throw new Error("The Andex app host is not subscribed.");
+  const callId = `andex-host-${Date.now()}-${++hostCallCounter}`;
+  writeEvent(requestId, "andex_host_call", { call_id: callId, method, args });
   return new Promise<JsonObject>((resolve, reject) => {
     const timeout = setTimeout(() => {
       pendingHostCalls.delete(callId);
-      reject(new Error(`Aether host call timed out: ${method}`));
+      reject(new Error(`Andex host call timed out: ${method}`));
     }, 2 * 60 * 1000);
     pendingHostCalls.set(callId, { resolve, reject, timeout });
   });
 }
-
 async function runOperation<T>(requestId: string, operation: () => Promise<T>): Promise<T> {
   activeOperationRequestIds.add(requestId);
   try {
@@ -134,7 +115,6 @@ async function runOperation<T>(requestId: string, operation: () => Promise<T>): 
     activeOperationRequestIds.delete(requestId);
   }
 }
-
 function resolveHostCall(payload: JsonObject): boolean {
   const callId = asString(payload.call_id).trim();
   const pending = pendingHostCalls.get(callId);
@@ -142,20 +122,18 @@ function resolveHostCall(payload: JsonObject): boolean {
   pendingHostCalls.delete(callId);
   clearTimeout(pending.timeout);
   if (asBoolean(payload.ok, true)) pending.resolve(asObject(payload.result));
-  else pending.reject(new Error(asString(payload.error, "Aether host call failed.")));
+  else pending.reject(new Error(asString(payload.error, "Andex host call failed.")));
   return true;
 }
-
-configureAetherExtensionTransport({
+configureAndexExtensionTransport({
   requestHost,
   invalidate(version) {
-    emitSubscriberEvent("aether_invalidated", { version });
+    emitSubscriberEvent("andex_invalidated", { version });
   },
   notify(message, level) {
-    emitSubscriberEvent("aether_notification", { message, level });
+    emitSubscriberEvent("andex_notification", { message, level });
   },
 });
-
 function loadOptions(payload: JsonObject): typeof currentLoadOptions {
   const hasOptions = Object.prototype.hasOwnProperty.call(payload, "disabled_extension_paths") ||
     Object.prototype.hasOwnProperty.call(payload, "disabled_package_sources");
@@ -167,7 +145,6 @@ function loadOptions(payload: JsonObject): typeof currentLoadOptions {
   }
   return currentLoadOptions;
 }
-
 async function installedPackagesPayload(): Promise<JsonObject> {
   return {
     packages: (await listExtensionPackages(process.cwd())).map((installedPackage) => ({
@@ -179,7 +156,7 @@ async function installedPackagesPayload(): Promise<JsonObject> {
       version: installedPackage.version,
       description: installedPackage.description,
       extension_count: installedPackage.extensionCount,
-      aether_extension_count: installedPackage.aetherExtensionCount,
+      andex_extension_count: installedPackage.andexExtensionCount,
       native_entrypoint_count: installedPackage.nativeEntrypointCount,
       skill_count: installedPackage.skillCount,
       prompt_count: installedPackage.promptCount,
@@ -188,28 +165,29 @@ async function installedPackagesPayload(): Promise<JsonObject> {
     })),
   };
 }
-
-async function reloadAether(id: string, payload: JsonObject): Promise<JsonObject> {
+async function reloadAndex(id: string, payload: JsonObject): Promise<JsonObject> {
   return runOperation(id, async () => {
-    const result = await loadAetherAppExtensions(process.cwd(), loadOptions(payload));
+    const result = await loadAndexAppExtensions(process.cwd(), loadOptions(payload));
     return {
       ...result,
-      snapshot: await aetherAppExtensionSnapshot(asObject(payload.context)),
+      snapshot: await andexAppExtensionSnapshot(asObject(payload.context)),
     };
   });
 }
-
 async function packageOperation(
   id: string,
   payload: JsonObject,
-  operation: (cwd: string, source: string) => Promise<unknown>,
+  operation: (cwd: string, source: string, onProgress: (phase: string) => void) => Promise<unknown>,
   result: JsonObject,
 ): Promise<JsonObject> {
   const source = asString(payload.source).trim();
-  await operation(process.cwd(), source);
-  const aetherReload = await runOperation(id, () =>
-    loadAetherAppExtensions(process.cwd(), loadOptions(payload))
+  const progress = (phase: string) => writeEvent(id, "extension_package_progress", { phase, source });
+  await operation(process.cwd(), source, progress);
+  progress("reloading");
+  const andexReload = await runOperation(id, () =>
+    loadAndexAppExtensions(process.cwd(), loadOptions(payload))
   );
+  progress("refreshing");
   return {
     ...result,
     source,
@@ -218,12 +196,11 @@ async function packageOperation(
       succeeded: true,
       session_count: 0,
       sessions: [],
-      aether_reload: aetherReload,
-      aether: await aetherAppExtensionSnapshot(),
+      andex_reload: andexReload,
+      andex: await andexAppExtensionSnapshot(),
     },
   };
 }
-
 async function handleRequest(request: BridgeRequest): Promise<void> {
   const id = asString(request.id);
   const type = asString(request.type);
@@ -294,63 +271,62 @@ async function handleRequest(request: BridgeRequest): Promise<void> {
       ));
       return;
     case "reload_all_extensions": {
-      const aetherReload = await runOperation(id, () =>
-        loadAetherAppExtensions(process.cwd(), loadOptions(payload))
+      const andexReload = await runOperation(id, () =>
+        loadAndexAppExtensions(process.cwd(), loadOptions(payload))
       );
       writeResponse(id, {
         succeeded: true,
         session_count: 0,
         sessions: [],
-        aether_reload: aetherReload,
-        aether: await aetherAppExtensionSnapshot(),
+        andex_reload: andexReload,
+        andex: await andexAppExtensionSnapshot(),
       });
       return;
     }
-    case "reload_aether_extensions":
-      writeResponse(id, await reloadAether(id, payload));
+    case "reload_andex_extensions":
+      writeResponse(id, await reloadAndex(id, payload));
       return;
-    case "get_aether_extensions":
+    case "get_andex_extensions":
       writeResponse(id, await runOperation(id, async () => ({
-        snapshot: await aetherAppExtensionSnapshot(asObject(payload.context)),
+        snapshot: await andexAppExtensionSnapshot(asObject(payload.context)),
       })));
       return;
-    case "invoke_aether_extension_action":
+    case "invoke_andex_extension_action":
       writeResponse(id, await runOperation(id, async () => ({
-        ...(await invokeAetherAppExtensionAction(
+        ...(await invokeAndexAppExtensionAction(
           asString(payload.extension_id),
           asString(payload.action),
           asObject(payload.args),
           asObject(payload.context),
         )),
-        snapshot: await aetherAppExtensionSnapshot(asObject(payload.context)),
+        snapshot: await andexAppExtensionSnapshot(asObject(payload.context)),
       })));
       return;
-    case "dispatch_aether_extension_event":
+    case "dispatch_andex_extension_event":
       writeResponse(id, await runOperation(id, async () => ({
-        ...(await dispatchAetherAppExtensionEvent(
+        ...(await dispatchAndexAppExtensionEvent(
           asString(payload.event),
           asObject(payload.data),
           asObject(payload.context),
         )),
-        snapshot: await aetherAppExtensionSnapshot(asObject(payload.context)),
+        snapshot: await andexAppExtensionSnapshot(asObject(payload.context)),
       })));
       return;
-    case "subscribe_aether_extensions":
+    case "subscribe_andex_extensions":
       subscriberRequestIds.add(id);
-      writeEvent(id, "aether_invalidated", { subscribed: true });
+      writeEvent(id, "andex_invalidated", { subscribed: true });
       return;
-    case "unsubscribe_aether_extensions":
+    case "unsubscribe_andex_extensions":
       subscriberRequestIds.delete(asString(payload.request_id, id));
       writeResponse(id, { unsubscribed: true });
       return;
-    case "aether_host_result":
+    case "andex_host_result":
       writeResponse(id, { accepted: resolveHostCall(payload) });
       return;
     default:
       throw new Error(`Unsupported request type in Extension Bridge: ${type}`);
   }
 }
-
 async function main(): Promise<void> {
   if (process.argv.includes("--ping")) {
     writeResponse("ping", {
@@ -381,7 +357,6 @@ async function main(): Promise<void> {
     );
   }
 }
-
 main().catch((error) => {
   stderr.write(`extension-bridge fatal: ${error instanceof Error ? error.stack ?? error.message : String(error)}\n`);
   process.exitCode = 1;

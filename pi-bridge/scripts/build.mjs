@@ -23,7 +23,7 @@ const nodeBundleSourcePatches = {
   name: "node-bundle-source-patches",
   setup(context) {
     context.onLoad(
-      { filter: /@earendil-works\/pi-coding-agent\/dist\/core\/extensions\/loader\.js$/ },
+      { filter: /@earendil-works[\\/]pi-coding-agent[\\/]dist[\\/]core[\\/]extensions[\\/]loader\.js$/ },
       async ({ path }) => {
         const source = await readFile(path, "utf8");
         const original = "const usesEmbeddedModules = isBunBinary || isNodeSeaBinary || isBundledNode;";
@@ -38,7 +38,7 @@ const nodeBundleSourcePatches = {
       },
     );
     context.onLoad(
-      { filter: /@earendil-works\/pi-ai\/dist\/api\/openai-completions\.js$/ },
+      { filter: /@earendil-works[\\/]pi-ai[\\/]dist[\\/]api[\\/]openai-completions\.js$/ },
       async ({ path }) => {
         const source = await readFile(path, "utf8");
         const original = "reasoning: rawUsage.completion_tokens_details?.reasoning_tokens || 0,";
@@ -64,7 +64,7 @@ const commonOptions = {
   minify: true,
   legalComments: "none",
   banner: {
-    js: "import { createRequire as __aetherCreateRequire } from 'node:module';import { dirname as __aetherDirname } from 'node:path';import { fileURLToPath as __aetherFileURLToPath } from 'node:url';const require = __aetherCreateRequire(import.meta.url);const __dirname = __aetherDirname(__aetherFileURLToPath(import.meta.url));",
+    js: "import { createRequire as __andexCreateRequire } from 'node:module';import { dirname as __andexDirname } from 'node:path';import { fileURLToPath as __andexFileURLToPath } from 'node:url';const require = __andexCreateRequire(import.meta.url);const __dirname = __andexDirname(__andexFileURLToPath(import.meta.url));",
   },
 };
 
@@ -79,6 +79,7 @@ await Promise.all([
     ...commonOptions,
     entryPoints: ["src/extension-bridge.ts"],
     outfile: "dist/extension-bridge.mjs",
+    plugins: [deduplicateDependencies, nodeBundleSourcePatches],
   }),
   build({
     ...commonOptions,

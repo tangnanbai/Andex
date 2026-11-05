@@ -1,4 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import { automaticCompactionSettings } from "./context-policy.js";
+import { persistentMemoryExtension } from "./persistent-memory.js";
 import { flushCompileCache } from "node:module";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
@@ -47,7 +49,7 @@ import { registerBunOAuthFlows } from "@earendil-works/pi-ai/bun-oauth";
 import {
   type AgentMessage,
   type AgentToolResult,
-} from "@earendil-works/pi-agent-core/node";
+} from "@earendil-works/pi-agent-core";
 import {
   AgentSession,
   DefaultResourceLoader,
@@ -74,46 +76,43 @@ import {
   type ExtensionFactory,
 } from "@earendil-works/pi-coding-agent";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
+import { openAIResponsesApi } from "@earendil-works/pi-ai/api/openai-responses.lazy";
+import { anthropicMessagesApi } from "@earendil-works/pi-ai/api/anthropic-messages.lazy";
 import type { TSchema } from "typebox";
 import {
-  discoverAetherExtensionPaths,
+  discoverAndexExtensionPaths,
   discoverPackageExtensionPaths,
-  installAetherExtensionPackage,
-  listAetherExtensionPackages,
-  removeAetherExtensionPackage,
-  updateAetherExtensionPackage,
+  installAndexExtensionPackage,
+  listAndexExtensionPackages,
+  removeAndexExtensionPackage,
+  updateAndexExtensionPackage,
 } from "./extensions.js";
 import {
-  aetherAppExtensionSnapshot,
-  configureAetherExtensionTransport,
-  dispatchAetherAppExtensionEvent,
-  invokeAetherAppExtensionAction,
-  loadAetherAppExtensions,
-} from "./aether-extensions.js";
+  andexAppExtensionSnapshot,
+  configureAndexExtensionTransport,
+  dispatchAndexAppExtensionEvent,
+  invokeAndexAppExtensionAction,
+  loadAndexAppExtensions,
+} from "./andex-extensions.js";
 import { bridgeDebug, bridgeDebugEnabled, bridgeDiagnostic, elapsedMillis } from "./debug.js";
 import { reserveProtocolStdout, writeProtocolFrame } from "./protocol-output.js";
-
 reserveProtocolStdout();
 registerBunOAuthFlows();
-
 const BRIDGE_VERSION = "2.0.0-alpha.0";
-const PI_AI_VERSION = "0.99.2";
-const PI_AGENT_CORE_VERSION = "0.99.2";
-const PI_CODING_AGENT_VERSION = "0.99.2";
-const AETHER_LOOPBACK_OAUTH_CALLBACK_HOST = "127.0.0.1";
+const PI_AI_VERSION = "1.3.0";
+const PI_AGENT_CORE_VERSION = "1.3.0";
+const PI_CODING_AGENT_VERSION = "1.3.0";
+const ANDEX_LOOPBACK_OAUTH_CALLBACK_HOST = "127.0.0.1";
 const OAUTH_FETCH_MAX_ATTEMPTS = 3;
 const DEFAULT_AGENT_RETRY_MAX_RETRIES = 5;
 const RUNTIME_OPERATION_CHUNK_BYTES = 64 * 1024;
 const DEVELOPER_ROLE_ERROR_BODY_MAX_CHARS = 16 * 1024;
-
 type JsonObject = Record<string, unknown>;
-
 interface BridgeRequest {
   id?: string;
   type?: string;
   payload?: JsonObject;
 }
-
 interface ModelConfig {
   provider_type: string;
   provider_config_id: string;
@@ -123,6 +122,7 @@ interface ModelConfig {
   base_url: string;
   api_key?: string;
   custom_headers?: Record<string, string>;
+  service_tier?: string;
   compatibility_mode?: boolean;
   supports_developer_role?: boolean;
   reasoning?: boolean;
@@ -144,9 +144,7 @@ interface ModelConfig {
   faux_tool_calls?: Array<{ name: string; arguments: JsonObject; id?: string }>;
   faux_tokens_per_second?: number;
 }
-
 type PiThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
-
 const PI_THINKING_LEVELS: readonly PiThinkingLevel[] = [
   "off",
   "minimal",
@@ -156,11 +154,9 @@ const PI_THINKING_LEVELS: readonly PiThinkingLevel[] = [
   "xhigh",
   "max",
 ];
-
 // Gemini's discrete thinkingLevel control only has these wire values; Pi's
 // Google transport rejects any other mapping at request time.
 const GOOGLE_THINKING_WIRE_LEVELS = new Set<string>(["minimal", "low", "medium", "high"]);
-
 interface ModelsDevMetadata {
   reasoning?: boolean;
   /** Pi thinking levels the provider accepts for this model, from models.dev reasoning options. */
@@ -169,38 +165,34 @@ interface ModelsDevMetadata {
   max_tokens?: number;
   input?: Array<"text" | "image">;
 }
-
 interface HostToolDefinition {
   name: string;
   description: string;
   parameters?: JsonObject;
   execution_mode?: "sequential" | "parallel";
 }
-
 interface PendingHostToolRequest {
   sessionId: string;
   resolve: (result: AgentToolResult<JsonObject>) => void;
   reject: (error: Error) => void;
   onUpdate?: (partialResult: AgentToolResult<JsonObject>) => void;
 }
-
 interface PendingRuntimeOperation {
   sessionId: string;
   resolve: (result: JsonObject) => void;
   reject: (error: Error) => void;
   onChunk?: (chunk: Buffer) => void;
 }
-
-interface PendingAetherHostCall {
+interface PendingAndexHostCall {
   resolve: (result: JsonObject) => void;
   reject: (error: Error) => void;
   timeout: NodeJS.Timeout;
 }
-
 interface AgentSessionState {
   sessionId: string;
   configSignature: string;
   toolSignature: string;
+  systemPrompt: string;
   extensionSignature: string;
   skillSignature: string;
   workspaceDirectory: string;
@@ -227,8 +219,7 @@ interface AgentSessionState {
   toolArgsById: Map<string, unknown>;
   lastAccessedAt: number;
 }
-
-// Pi reports usage per API call; one Aether turn can issue several calls
+// Pi reports usage per API call; one Andex turn can issue several calls
 // (tool loops, auto retries, follow-ups), so the bridge accumulates them and
 // hands the app a per-turn total.
 interface TurnUsageTotals {
@@ -241,18 +232,16 @@ interface TurnUsageTotals {
   totalTokens: number;
   requestCount: number;
 }
-
 interface CompatibilityFallbackState {
   developerRoleUnsupportedDetected: boolean;
 }
-
 const activeAborters = new Map<string, () => void | Promise<unknown>>();
 const pendingHostToolRequests = new Map<string, PendingHostToolRequest>();
 const pendingRuntimeOperations = new Map<string, PendingRuntimeOperation>();
-const pendingAetherHostCalls = new Map<string, PendingAetherHostCall>();
-const aetherSubscriberRequestIds = new Set<string>();
-const aetherOperationContext = new AsyncLocalStorage<string>();
-const activeAetherOperationRequestIds = new Set<string>();
+const pendingAndexHostCalls = new Map<string, PendingAndexHostCall>();
+const andexSubscriberRequestIds = new Set<string>();
+const andexOperationContext = new AsyncLocalStorage<string>();
+const activeAndexOperationRequestIds = new Set<string>();
 const pendingAuthPrompts = new Map<
   string,
   {
@@ -266,23 +255,19 @@ let currentExtensionLoadOptions = {
   disabledExtensionPaths: [] as string[],
   disabledPackageSources: [] as string[],
 };
-
 interface NativeExtensionLoadOptions {
   disabledExtensionPaths: string[];
   disabledPackageSources: string[];
 }
-
 interface SharedCredentialState {
   credential?: Credential;
   queue: Promise<void>;
 }
-
 const sharedCredentialStates = new Map<string, SharedCredentialState>();
 let oauthTransportQueue: Promise<void> = Promise.resolve();
-
 const builtinProviderById = new Map(
   builtinProviders().map((provider) => {
-    const oauth = aetherOAuthAuth(provider.id, provider.auth.oauth);
+    const oauth = andexOAuthAuth(provider.id, provider.auth.oauth);
     return [
       provider.id,
       oauth
@@ -301,9 +286,8 @@ let defaultModelConfig: ModelConfig | undefined;
 let hostToolCounter = 0;
 let runtimeOperationCounter = 0;
 let authPromptCounter = 0;
-let aetherHostCallCounter = 0;
+let andexHostCallCounter = 0;
 let compileCacheFlushed = false;
-
 function flushStartupCompileCache(): void {
   if (compileCacheFlushed) return;
   compileCacheFlushed = true;
@@ -313,14 +297,13 @@ function flushStartupCompileCache(): void {
     // Compile caching is an optimization and must not affect bridge requests.
   }
 }
-
-function aetherOAuthAuth(providerId: string, oauth: OAuthAuth | undefined): OAuthAuth | undefined {
+function andexOAuthAuth(providerId: string, oauth: OAuthAuth | undefined): OAuthAuth | undefined {
   if (!oauth) return undefined;
   if (providerId !== "openai-codex") return oauth;
   return {
     ...oauth,
     login: async (interaction) =>
-      withAetherOAuthTransport(providerId, interaction, () =>
+      withAndexOAuthTransport(providerId, interaction, () =>
         oauth.login({
           ...interaction,
           prompt: (prompt) =>
@@ -343,10 +326,8 @@ function aetherOAuthAuth(providerId: string, oauth: OAuthAuth | undefined): OAut
       ),
   };
 }
-
 class BridgeCredentialStore implements CredentialStore {
   private readonly state: SharedCredentialState;
-
   constructor(
     readonly providerId: string,
     providerConfigId: string,
@@ -360,7 +341,6 @@ class BridgeCredentialStore implements CredentialStore {
       sharedCredentialStates.set(providerConfigId, this.state);
     }
   }
-
   async read(providerId: string): Promise<Credential | undefined> {
     if (providerId !== this.providerId) return undefined;
     const startedAt = Date.now();
@@ -373,13 +353,11 @@ class BridgeCredentialStore implements CredentialStore {
     });
     return this.state.credential;
   }
-
   async list(): Promise<readonly CredentialInfo[]> {
     await this.state.queue;
     const credential = this.state.credential;
     return credential ? [{ providerId: this.providerId, type: credential.type }] : [];
   }
-
   async modify(
     providerId: string,
     fn: (current: Credential | undefined) => Promise<Credential | undefined>,
@@ -410,7 +388,6 @@ class BridgeCredentialStore implements CredentialStore {
     }
     return result;
   }
-
   async delete(providerId: string): Promise<void> {
     if (providerId !== this.providerId) return;
     bridgeDebug("credential_delete_start", { provider_id: providerId });
@@ -422,7 +399,6 @@ class BridgeCredentialStore implements CredentialStore {
     bridgeDebug("credential_delete_done", { provider_id: providerId });
   }
 }
-
 async function replaceSharedCredential(
   providerConfigId: string,
   credential: Credential,
@@ -442,7 +418,6 @@ async function replaceSharedCredential(
   existing.queue = operation.catch(() => undefined);
   await operation;
 }
-
 async function clearSharedCredential(providerConfigId: string): Promise<boolean> {
   bridgeDebug("shared_credential_clear", { provider_config_id: providerConfigId });
   const existing = sharedCredentialStates.get(providerConfigId);
@@ -454,19 +429,15 @@ async function clearSharedCredential(providerConfigId: string): Promise<boolean>
   await operation;
   return true;
 }
-
 function writeFrame(frame: JsonObject): void {
   writeProtocolFrame(frame);
 }
-
 function writeEvent(id: string, event: string, payload: JsonObject = {}): void {
   writeFrame({ type: "event", id, event, payload });
 }
-
 function writeResponse(id: string, payload: JsonObject = {}): void {
   writeFrame({ type: "response", id, ok: true, payload });
 }
-
 function writeError(id: string | undefined, error: unknown, code = "bridge_error"): void {
   const message = errorMessageWithCause(error);
   writeFrame({
@@ -479,26 +450,24 @@ function writeError(id: string | undefined, error: unknown, code = "bridge_error
     },
   });
 }
-
-function emitAetherSubscriberEvent(event: string, payload: JsonObject = {}): void {
-  for (const requestId of aetherSubscriberRequestIds) {
+function emitAndexSubscriberEvent(event: string, payload: JsonObject = {}): void {
+  for (const requestId of andexSubscriberRequestIds) {
     writeEvent(requestId, event, payload);
   }
 }
-
-function requestAetherHost(method: string, args: JsonObject): Promise<JsonObject> {
-  const operationRequestId = aetherOperationContext.getStore();
+function requestAndexHost(method: string, args: JsonObject): Promise<JsonObject> {
+  const operationRequestId = andexOperationContext.getStore();
   const requestId = operationRequestId &&
-      activeAetherOperationRequestIds.has(operationRequestId)
+      activeAndexOperationRequestIds.has(operationRequestId)
     ? operationRequestId
-    : aetherSubscriberRequestIds.values().next().value;
+    : andexSubscriberRequestIds.values().next().value;
   if (!requestId) {
-    bridgeDebug("aether_host_call_no_subscriber", { method });
-    throw new Error("The Aether app host is not subscribed.");
+    bridgeDebug("andex_host_call_no_subscriber", { method });
+    throw new Error("The Andex app host is not subscribed.");
   }
-  const callId = `aether-host-${Date.now()}-${++aetherHostCallCounter}`;
-  bridgeDebug("aether_host_call_start", { call_id: callId, method, routed_request_id: requestId });
-  writeEvent(requestId, "aether_host_call", {
+  const callId = `andex-host-${Date.now()}-${++andexHostCallCounter}`;
+  bridgeDebug("andex_host_call_start", { call_id: callId, method, routed_request_id: requestId });
+  writeEvent(requestId, "andex_host_call", {
     call_id: callId,
     method,
     args,
@@ -506,58 +475,54 @@ function requestAetherHost(method: string, args: JsonObject): Promise<JsonObject
   const startedAt = Date.now();
   return new Promise<JsonObject>((resolve, reject) => {
     const timeout = setTimeout(() => {
-      pendingAetherHostCalls.delete(callId);
-      bridgeDebug("aether_host_call_timeout", {
+      pendingAndexHostCalls.delete(callId);
+      bridgeDebug("andex_host_call_timeout", {
         call_id: callId,
         method,
         elapsed_ms: elapsedMillis(startedAt),
       });
-      reject(new Error(`Aether host call timed out: ${method}`));
+      reject(new Error(`Andex host call timed out: ${method}`));
     }, 2 * 60 * 1000);
-    pendingAetherHostCalls.set(callId, { resolve, reject, timeout });
+    pendingAndexHostCalls.set(callId, { resolve, reject, timeout });
   });
 }
-
-async function runAetherOperation<T>(
+async function runAndexOperation<T>(
   requestId: string,
   operation: () => Promise<T>,
 ): Promise<T> {
-  activeAetherOperationRequestIds.add(requestId);
+  activeAndexOperationRequestIds.add(requestId);
   try {
-    return await aetherOperationContext.run(requestId, operation);
+    return await andexOperationContext.run(requestId, operation);
   } finally {
-    activeAetherOperationRequestIds.delete(requestId);
+    activeAndexOperationRequestIds.delete(requestId);
   }
 }
-
-function resolveAetherHostCall(payload: JsonObject): boolean {
+function resolveAndexHostCall(payload: JsonObject): boolean {
   const callId = asString(payload.call_id).trim();
-  const pending = callId ? pendingAetherHostCalls.get(callId) : undefined;
+  const pending = callId ? pendingAndexHostCalls.get(callId) : undefined;
   if (!pending) {
-    bridgeDebug("aether_host_result_orphaned", { call_id: callId });
+    bridgeDebug("andex_host_result_orphaned", { call_id: callId });
     return false;
   }
-  pendingAetherHostCalls.delete(callId);
+  pendingAndexHostCalls.delete(callId);
   clearTimeout(pending.timeout);
-  bridgeDebug("aether_host_call_resolved", { call_id: callId, ok: asBoolean(payload.ok, true) });
+  bridgeDebug("andex_host_call_resolved", { call_id: callId, ok: asBoolean(payload.ok, true) });
   if (asBoolean(payload.ok, true)) {
     pending.resolve(asObject(payload.result));
   } else {
-    pending.reject(new Error(asString(payload.error, "Aether host call failed.")));
+    pending.reject(new Error(asString(payload.error, "Andex host call failed.")));
   }
   return true;
 }
-
-configureAetherExtensionTransport({
-  requestHost: requestAetherHost,
+configureAndexExtensionTransport({
+  requestHost: requestAndexHost,
   invalidate(version) {
-    emitAetherSubscriberEvent("aether_invalidated", { version });
+    emitAndexSubscriberEvent("andex_invalidated", { version });
   },
   notify(message, level) {
-    emitAetherSubscriberEvent("aether_notification", { message, level });
+    emitAndexSubscriberEvent("andex_notification", { message, level });
   },
 });
-
 function errorMessageWithCause(error: unknown): string {
   const messages: string[] = [];
   const seen = new Set<object>();
@@ -604,7 +569,6 @@ function errorMessageWithCause(error: unknown): string {
   if (messages.length > 0) return messages.join(": ");
   return error instanceof Error ? error.name : String(error);
 }
-
 function fetchWithDetailedErrors(
   fetchImplementation: typeof fetch,
   onError?: (detail: string) => void,
@@ -638,32 +602,27 @@ function fetchWithDetailedErrors(
     }
   };
 }
-
 globalThis.fetch = fetchWithDetailedErrors(globalThis.fetch.bind(globalThis));
-
 function fetchUrl(input: string | URL | Request): string {
   if (typeof input === "string") return input;
   if (input instanceof URL) return input.toString();
   return input.url;
 }
-
-async function withAetherOAuthTransport<T>(
+async function withAndexOAuthTransport<T>(
   providerId: string,
   interaction: AuthInteraction,
   login: () => Promise<T>,
 ): Promise<T> {
   if (providerId !== "openai-codex") return login();
-
   const previousOperation = oauthTransportQueue;
   let releaseTransport: () => void = () => undefined;
   oauthTransportQueue = new Promise<void>((resolve) => {
     releaseTransport = resolve;
   });
   await previousOperation;
-
   const previousCallbackHost = process.env.PI_OAUTH_CALLBACK_HOST;
   const originalFetch = globalThis.fetch;
-  process.env.PI_OAUTH_CALLBACK_HOST = AETHER_LOOPBACK_OAUTH_CALLBACK_HOST;
+  process.env.PI_OAUTH_CALLBACK_HOST = ANDEX_LOOPBACK_OAUTH_CALLBACK_HOST;
   globalThis.fetch = async (input, init) => {
     const url = fetchUrl(input);
     if (!url.startsWith("https://auth.openai.com/")) {
@@ -689,7 +648,6 @@ async function withAetherOAuthTransport<T>(
       { cause: lastError },
     );
   };
-
   try {
     return await login();
   } finally {
@@ -702,23 +660,18 @@ async function withAetherOAuthTransport<T>(
     releaseTransport();
   }
 }
-
 function asObject(value: unknown): JsonObject {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as JsonObject) : {};
 }
-
 function asString(value: unknown, fallback = ""): string {
   return typeof value === "string" ? value : fallback;
 }
-
 function asNumber(value: unknown, fallback: number): number {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
-
 function asBoolean(value: unknown, fallback: boolean): boolean {
   return typeof value === "boolean" ? value : fallback;
 }
-
 function normalizeBaseUrlForComparison(value: string | undefined): string {
   const trimmed = (value ?? "").trim();
   if (!trimmed) return "";
@@ -730,7 +683,6 @@ function normalizeBaseUrlForComparison(value: string | undefined): string {
     return trimmed.replace(/\/+$/, "");
   }
 }
-
 function isCustomResponsesEndpoint(
   model: Model<string>,
   configuredBaseUrl: string | undefined,
@@ -743,7 +695,6 @@ function isCustomResponsesEndpoint(
     configured !== normalizeBaseUrlForComparison(defaultBaseUrl)
   );
 }
-
 function normalizeHeaders(value: unknown): Record<string, string> {
   const inputHeaders = asObject(value);
   const headers: Record<string, string> = {};
@@ -753,7 +704,6 @@ function normalizeHeaders(value: unknown): Record<string, string> {
   }
   return headers;
 }
-
 function normalizeThinkingLevelMap(rawValue: unknown): Record<string, string | null> | undefined {
   const raw = asObject(rawValue);
   if (!raw || Object.keys(raw).length === 0) return undefined;
@@ -767,11 +717,9 @@ function normalizeThinkingLevelMap(rawValue: unknown): Record<string, string | n
   }
   return Object.keys(result).length > 0 ? result : undefined;
 }
-
 function positiveInteger(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : undefined;
 }
-
 function normalizeModelsDevMetadata(rawValue: unknown): ModelsDevMetadata | undefined {
   const raw = asObject(rawValue);
   if (Object.keys(raw).length === 0) return undefined;
@@ -791,7 +739,6 @@ function normalizeModelsDevMetadata(rawValue: unknown): ModelsDevMetadata | unde
   }
   return Object.keys(metadata).length > 0 ? metadata : undefined;
 }
-
 /**
  * Rebuild Pi's per-level support map from the levels models.dev reports.
  *
@@ -828,7 +775,6 @@ function modelsDevThinkingLevelMap(
   }
   return result;
 }
-
 function applyModelsDevMetadata(model: Model<string>, metadata: ModelsDevMetadata | undefined): Model<string> {
   if (!metadata) return model;
   const next = { ...model } as Model<string> & Record<string, unknown>;
@@ -840,7 +786,6 @@ function applyModelsDevMetadata(model: Model<string>, metadata: ModelsDevMetadat
   if (thinkingLevelMap) next.thinkingLevelMap = thinkingLevelMap;
   return next;
 }
-
 function withExplicitThinkingLevelMap(
   model: Model<string>,
   thinkingLevelMap: Record<string, string | null> | undefined,
@@ -854,7 +799,6 @@ function withExplicitThinkingLevelMap(
     },
   } as Model<string>;
 }
-
 /**
  * Serve the configured model from the provider's catalog so every Pi lookup
  * by id (session restore, extensions, compaction) sees the same
@@ -875,7 +819,6 @@ function providerServingModel(provider: Provider, model: Model<string>): Provide
     },
   } as Provider;
 }
-
 function normalizeModelConfig(rawValue: unknown): ModelConfig {
   const raw = asObject(rawValue);
   const providerType = asString(raw.provider_type).trim();
@@ -916,6 +859,7 @@ function normalizeModelConfig(rawValue: unknown): ModelConfig {
     base_url: baseUrl,
     api_key: asString(raw.api_key),
     custom_headers: normalizeHeaders(raw.custom_headers),
+    service_tier: asString(raw.service_tier).trim() || undefined,
     compatibility_mode: asBoolean(raw.compatibility_mode, false),
     supports_developer_role: raw.supports_developer_role === false ? false : undefined,
     reasoning: asBoolean(raw.reasoning, false),
@@ -935,7 +879,6 @@ function normalizeModelConfig(rawValue: unknown): ModelConfig {
     faux_tokens_per_second: asNumber(raw.faux_tokens_per_second, 0),
   };
 }
-
 function isOAuthCredential(value: JsonObject): value is JsonObject & {
   access: string;
   refresh: string;
@@ -947,7 +890,6 @@ function isOAuthCredential(value: JsonObject): value is JsonObject & {
     typeof value.expires === "number"
   );
 }
-
 function credentialForConfig(config: ModelConfig): Credential | undefined {
   if (config.auth_method === "oauth" && isOAuthCredential(config.oauth_credential ?? {})) {
     return {
@@ -964,7 +906,6 @@ function credentialForConfig(config: ModelConfig): Credential | undefined {
   }
   return undefined;
 }
-
 function authContextFor(config: ModelConfig): AuthContext {
   const fallback = defaultProviderAuthContext();
   const configuredEnv = config.provider_env ?? {};
@@ -973,7 +914,6 @@ function authContextFor(config: ModelConfig): AuthContext {
     fileExists: (path) => fallback.fileExists(path),
   };
 }
-
 function normalizeFauxToolCalls(rawValue: unknown): Array<{ name: string; arguments: JsonObject; id?: string }> {
   if (!Array.isArray(rawValue)) return [];
   return rawValue.flatMap((rawCall) => {
@@ -989,23 +929,43 @@ function normalizeFauxToolCalls(rawValue: unknown): Array<{ name: string; argume
     ];
   });
 }
-
 function apiStreamsFor(piApi: string): ProviderStreams {
   switch (piApi) {
+    case "openai-responses":
+      return openAIResponsesApi();
+    case "anthropic-messages":
+      return anthropicMessagesApi();
     case "openai-completions":
       return openAICompletionsApi();
     default:
       throw new Error(`Unsupported custom Pi API: ${piApi}`);
   }
 }
-
 function requestContainsDeveloperMessage(payload: unknown): boolean {
   const messages = asObject(payload).messages;
   return Array.isArray(messages) && messages.some((message) =>
     asString(asObject(message).role).trim().toLowerCase() === "developer"
   );
 }
-
+// Apply at the provider boundary so AgentSession turns, retries, compaction,
+// and one-shot requests all use the configured body field.
+function serviceTierProvider(provider: Provider, config: ModelConfig): Provider {
+  const serviceTier = config.service_tier;
+  if (!serviceTier) return provider;
+  const wrap = (call: ProviderStreams["streamSimple"]): ProviderStreams["streamSimple"] =>
+    (model, context, options) => call(model, context, {
+      ...options,
+      onPayload: async (payload, requestModel) => {
+        const transformed = await options?.onPayload?.(payload, requestModel);
+        return { ...asObject(transformed ?? payload), service_tier: serviceTier };
+      },
+    });
+  return {
+    ...provider,
+    stream: wrap(provider.stream.bind(provider)) as Provider["stream"],
+    streamSimple: wrap(provider.streamSimple.bind(provider)),
+  };
+}
 function compatibilityModeStreams(streams: ProviderStreams): ProviderStreams {
   type SupportedOptions = StreamOptions | SimpleStreamOptions;
   type StreamCall = (
@@ -1013,7 +973,6 @@ function compatibilityModeStreams(streams: ProviderStreams): ProviderStreams {
     context: Context,
     options?: SupportedOptions,
   ) => AssistantMessageEventStream;
-
   const wrap = (call: StreamCall): StreamCall => (model, context, options) => call(model, context, {
     ...options,
     onPayload: async (payload: unknown, requestModel: Model<"openai-completions">) => {
@@ -1033,18 +992,15 @@ function compatibilityModeStreams(streams: ProviderStreams): ProviderStreams {
       };
     },
   } as SupportedOptions);
-
   return {
     ...streams,
     stream: wrap(streams.stream as StreamCall) as ProviderStreams["stream"],
     streamSimple: wrap(streams.streamSimple as StreamCall) as ProviderStreams["streamSimple"],
   };
 }
-
 function isDeveloperRoleUnsupportedError(errorMessage: string): boolean {
   const normalized = errorMessage.toLowerCase().replace(/\s+/g, " ").trim();
   if (!normalized.includes("developer")) return false;
-
   const directRoleRejections = [
     /(?:invalid|unsupported|unknown|unrecognized|unrecognised)\s+(?:message\s+)?role[^.\n]{0,80}["']?developer["']?/,
     /(?:role|message role)[^.\n]{0,80}["']?developer["']?[^.\n]{0,80}(?:not\s+(?:supported|allowed|valid|recognized|recognised|permitted)|unsupported|invalid|unknown)/,
@@ -1054,7 +1010,6 @@ function isDeveloperRoleUnsupportedError(errorMessage: string): boolean {
     /(?:message\s+)?role[^.\n]{0,120}(?:must be one of|expected one of|allowed values?)[^.\n]{0,160}(?:got|received|input|provided)?[^.\n]{0,30}["']?developer["']?/,
   ];
   if (directRoleRejections.some((pattern) => pattern.test(normalized))) return true;
-
   const hasMessageRoleLocation =
     /messages?(?:\[[^\]]+\]|\.[^.\s:]+)*[.\s:'"\]]role/.test(normalized) ||
     /["']messages["'][^\n]{0,160}["']role["']/.test(normalized);
@@ -1072,13 +1027,11 @@ function isDeveloperRoleUnsupportedError(errorMessage: string): boolean {
     /(?:invalid|unsupported) value\s*:?\s*["']developer["']/.test(normalized) &&
     /supported values?|allowed values?|must be one of|expected one of/.test(normalized)
   ) return true;
-
   return (
     /(?:supported|allowed|valid|permitted) (?:message )?roles?[^.\n]{0,160}(?:system|user)[^.\n]{0,160}(?:got|received|input|provided)[^.\n]{0,40}["']?developer["']?/.test(normalized) ||
     /(?:supported|allowed|valid|permitted) (?:message )?roles?[^.\n]{0,160}(?:system|user)[^.\n]{0,160}["']?developer["']?[^.\n]{0,40}(?:was )?provided/.test(normalized)
   );
 }
-
 function developerRoleFallbackStreams(
   streams: ProviderStreams,
   state: CompatibilityFallbackState,
@@ -1089,7 +1042,6 @@ function developerRoleFallbackStreams(
     context: Context,
     options?: SupportedOptions,
   ) => AssistantMessageEventStream;
-
   const wrap = (call: StreamCall): StreamCall => (model, context, options) => {
     const output = createAssistantMessageEventStream();
     void (async () => {
@@ -1161,15 +1113,13 @@ function developerRoleFallbackStreams(
     });
     return output;
   };
-
   return {
     ...streams,
     stream: wrap(streams.stream as StreamCall) as ProviderStreams["stream"],
     streamSimple: wrap(streams.streamSimple as StreamCall) as ProviderStreams["streamSimple"],
   };
 }
-
-function createAetherModel(config: ModelConfig): Model<string> {
+function createAndexModel(config: ModelConfig): Model<string> {
   return {
     id: config.model_id,
     name: config.model_id,
@@ -1193,7 +1143,6 @@ function createAetherModel(config: ModelConfig): Model<string> {
       : {}),
   } as Model<string>;
 }
-
 function buildModels(config: ModelConfig): {
   models: MutableModels;
   model: Model<string>;
@@ -1251,7 +1200,6 @@ function buildModels(config: ModelConfig): {
     const model = faux.getModel(config.model_id) ?? faux.getModel();
     return { models, model, provider: faux.provider, compatibilityFallbackState };
   }
-
   if (config.provider_type === "builtin") {
     bridgeDebug("build_models_path", { path: "builtin", pi_provider_id: config.pi_provider_id });
     const provider = builtinProviderById.get(config.pi_provider_id);
@@ -1321,33 +1269,32 @@ function buildModels(config: ModelConfig): {
       applyModelsDevMetadata(catalogModel, config.models_dev),
       config.thinking_level_map,
     );
-    const servingProvider = providerServingModel(provider, model);
+    const servingProvider = serviceTierProvider(providerServingModel(provider, model), config);
     models.setProvider(servingProvider);
     return { models, model, provider: servingProvider, credentialStore, compatibilityFallbackState };
   }
-
   const models = createModels();
   const model = withExplicitThinkingLevelMap(
-    applyModelsDevMetadata(createAetherModel(config), config.models_dev),
+    applyModelsDevMetadata(createAndexModel(config), config.models_dev),
     config.thinking_level_map,
   );
   bridgeDebug("build_models_path", { path: "custom", pi_api: config.pi_api });
   const headers = config.custom_headers ?? {};
-  const provider = createProvider({
+  const provider = serviceTierProvider(createProvider({
     id: config.pi_provider_id,
     name: config.pi_provider_id,
     baseUrl: config.base_url,
     headers,
     auth: {
       apiKey: {
-        name: "Aether provider credentials",
+        name: "Andex provider credentials",
         resolve: async () => ({
           auth: {
             apiKey: config.api_key || undefined,
             baseUrl: config.base_url || undefined,
             headers,
           },
-          source: "Aether",
+          source: "Andex",
         }),
       },
     },
@@ -1358,11 +1305,10 @@ function buildModels(config: ModelConfig): {
         : apiStreamsFor(config.pi_api),
       compatibilityFallbackState,
     ),
-  });
+  }), config);
   models.setProvider(provider);
   return { models, model, provider, compatibilityFallbackState };
 }
-
 async function buildModelRuntime(config: ModelConfig): Promise<{
   modelRuntime: ModelRuntime;
   model: Model<string>;
@@ -1395,7 +1341,6 @@ async function buildModelRuntime(config: ModelConfig): Promise<{
     compatibilityFallbackState: built.compatibilityFallbackState,
   };
 }
-
 async function credentialPayload(
   credentialStore: BridgeCredentialStore | undefined,
 ): Promise<JsonObject> {
@@ -1406,7 +1351,6 @@ async function credentialPayload(
     oauth_credential: credential as unknown as JsonObject,
   };
 }
-
 function providerCatalogPayload(): JsonObject {
   // Model capabilities (reasoning, thinking levels, limits, modalities) come
   // from models.dev on the host; Pi's bundled catalog only lists what exists.
@@ -1434,7 +1378,6 @@ function providerCatalogPayload(): JsonObject {
     }),
   };
 }
-
 function normalizeContentPart(rawValue: unknown): { type: "text"; text: string } | { type: "image"; mimeType: string; data: string } | undefined {
   const raw = asObject(rawValue);
   const type = asString(raw.type);
@@ -1450,7 +1393,6 @@ function normalizeContentPart(rawValue: unknown): { type: "text"; text: string }
   const text = asString(raw.text);
   return { type: "text", text };
 }
-
 function normalizeUserContent(rawContent: unknown): string | Array<{ type: "text"; text: string } | { type: "image"; mimeType: string; data: string }> {
   if (typeof rawContent === "string") return rawContent;
   if (!Array.isArray(rawContent)) return "";
@@ -1458,7 +1400,6 @@ function normalizeUserContent(rawContent: unknown): string | Array<{ type: "text
   if (parts.length === 1 && parts[0].type === "text") return parts[0].text;
   return parts;
 }
-
 function textFromContent(rawContent: unknown): string {
   if (typeof rawContent === "string") return rawContent;
   if (!Array.isArray(rawContent)) return "";
@@ -1470,7 +1411,6 @@ function textFromContent(rawContent: unknown): string {
     .filter(Boolean)
     .join("");
 }
-
 function persistedPiAssistantMessage(rawProviderPayload: unknown): JsonObject {
   const providerPayload = asObject(rawProviderPayload);
   const wrapped = asObject(
@@ -1484,7 +1424,6 @@ function persistedPiAssistantMessage(rawProviderPayload: unknown): JsonObject {
   }
   return {};
 }
-
 function normalizeMessages(rawMessages: unknown): Context["messages"] {
   if (!Array.isArray(rawMessages)) return [];
   return rawMessages.flatMap((rawMessage): Message[] => {
@@ -1499,8 +1438,8 @@ function normalizeMessages(rawMessages: unknown): Context["messages"] {
         {
           role: "assistant" as const,
           content: [{ type: "text" as const, text: asString(raw.text, textFromContent(raw.content)) }],
-          api: asString(raw.api, "aether"),
-          provider: asString(raw.provider, "aether"),
+          api: asString(raw.api, "andex"),
+          provider: asString(raw.provider, "andex"),
           model: asString(raw.model, "unknown"),
           usage: emptyUsage(),
           stopReason: "stop" as const,
@@ -1529,14 +1468,12 @@ function normalizeMessages(rawMessages: unknown): Context["messages"] {
     ];
   });
 }
-
 function buildContext(payload: JsonObject): Context {
   return {
     systemPrompt: asString(payload.system_prompt),
     messages: normalizeMessages(payload.messages),
   };
 }
-
 function emptyUsage(): Usage {
   return {
     input: 0,
@@ -1553,7 +1490,6 @@ function emptyUsage(): Usage {
     },
   };
 }
-
 function usagePayload(usage: Usage | undefined): JsonObject {
   if (!usage) return {};
   return {
@@ -1565,21 +1501,18 @@ function usagePayload(usage: Usage | undefined): JsonObject {
     cache_write_tokens: usage.cacheWrite,
   };
 }
-
 function assistantText(message: AssistantMessage): string {
   return message.content
     .filter((block) => block.type === "text")
     .map((block) => block.text)
     .join("");
 }
-
 function assistantThinking(message: AssistantMessage): string {
   return message.content
     .filter((block) => block.type === "thinking")
     .map((block) => block.thinking)
     .join("");
 }
-
 function assistantPayload(message: AssistantMessage): JsonObject {
   return {
     assistant_text: assistantText(message),
@@ -1593,7 +1526,6 @@ function assistantPayload(message: AssistantMessage): JsonObject {
     error_message: message.errorMessage,
   };
 }
-
 function emitStreamEvent(requestId: string, event: AssistantMessageEvent): void {
   switch (event.type) {
     case "text_delta":
@@ -1623,7 +1555,6 @@ function emitStreamEvent(requestId: string, event: AssistantMessageEvent): void 
       break;
   }
 }
-
 function streamOptionsFor(
   payload: JsonObject,
   signal: AbortSignal,
@@ -1654,7 +1585,6 @@ function streamOptionsFor(
   }
   return options;
 }
-
 function normalizeHostToolDefinitions(rawTools: unknown): HostToolDefinition[] {
   if (!Array.isArray(rawTools)) return [];
   return rawTools
@@ -1672,7 +1602,6 @@ function normalizeHostToolDefinitions(rawTools: unknown): HostToolDefinition[] {
     })
     .filter((tool): tool is HostToolDefinition => Boolean(tool));
 }
-
 function hostToolSchema(definition: HostToolDefinition): TSchema {
   const schema = asObject(definition.parameters);
   if (asString(schema.type)) return schema as unknown as TSchema;
@@ -1682,7 +1611,6 @@ function hostToolSchema(definition: HostToolDefinition): TSchema {
     additionalProperties: true,
   } as unknown as TSchema;
 }
-
 function normalizeToolArguments(args: unknown): JsonObject {
   if (typeof args === "string") {
     try {
@@ -1693,7 +1621,6 @@ function normalizeToolArguments(args: unknown): JsonObject {
   }
   return asObject(args);
 }
-
 function normalizeToolContent(rawContent: unknown, fallbackText: string): Array<TextContent | ImageContent> {
   if (!Array.isArray(rawContent)) return [{ type: "text", text: fallbackText }];
   const content = rawContent
@@ -1717,7 +1644,6 @@ function normalizeToolContent(rawContent: unknown, fallbackText: string): Array<
     .filter((part): part is TextContent | ImageContent => Boolean(part));
   return content.length > 0 ? content : [{ type: "text", text: fallbackText }];
 }
-
 function hostToolResultFromPayload(payload: JsonObject): AgentToolResult<JsonObject> {
   const outputText = asString(payload.output_json, asString(payload.output, ""));
   const details = {
@@ -1736,7 +1662,6 @@ function hostToolResultFromPayload(payload: JsonObject): AgentToolResult<JsonObj
     terminate: asBoolean(payload.terminate, false) || undefined,
   };
 }
-
 function resolveHostToolResult(payload: JsonObject): boolean {
   const toolRequestId = asString(payload.tool_request_id).trim();
   const pending = toolRequestId ? pendingHostToolRequests.get(toolRequestId) : undefined;
@@ -1757,7 +1682,6 @@ function resolveHostToolResult(payload: JsonObject): boolean {
   pending.resolve(hostToolResultFromPayload(payload));
   return true;
 }
-
 function applyHostToolProgress(payload: JsonObject): boolean {
   const toolRequestId = asString(payload.tool_request_id).trim();
   const pending = toolRequestId ? pendingHostToolRequests.get(toolRequestId) : undefined;
@@ -1768,7 +1692,6 @@ function applyHostToolProgress(payload: JsonObject): boolean {
   pending.onUpdate?.(hostToolResultFromPayload(payload));
   return true;
 }
-
 function toolTextOutput(result: AgentToolResult<JsonObject> | undefined): string {
   if (!result) return "";
   return result.content
@@ -1776,7 +1699,6 @@ function toolTextOutput(result: AgentToolResult<JsonObject> | undefined): string
     .map((part) => part.text)
     .join("");
 }
-
 function toolEventPayload(
   toolCallId: string,
   toolName: string,
@@ -1798,7 +1720,6 @@ function toolEventPayload(
     is_error: isError ?? asBoolean(details.is_error, false),
   };
 }
-
 function promptFromLastUserMessage(messages: Message[]): {
   history: AgentMessage[];
   text: string;
@@ -1819,7 +1740,6 @@ function promptFromLastUserMessage(messages: Message[]): {
   const images = content.filter((part): part is ImageContent => part.type === "image");
   return { history: messages.slice(0, -1) as AgentMessage[], text, images };
 }
-
 function thinkingLevelFor(payload: JsonObject): "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | undefined {
   const reasoning = asString(payload.reasoning).trim().toLowerCase();
   if (!reasoning) return undefined;
@@ -1829,15 +1749,12 @@ function thinkingLevelFor(payload: JsonObject): "off" | "minimal" | "low" | "med
   }
   return undefined;
 }
-
 function modelConfigSignature(config: ModelConfig): string {
   return JSON.stringify(config);
 }
-
 function hostToolSignature(rawTools: unknown): string {
   return JSON.stringify(normalizeHostToolDefinitions(rawTools));
 }
-
 function latestAssistantMessage(messages: AgentMessage[]): AssistantMessage | undefined {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
@@ -1845,55 +1762,54 @@ function latestAssistantMessage(messages: AgentMessage[]): AssistantMessage | un
   }
   return undefined;
 }
-
-const AETHER_HOST_TOOL_NAMES = new Set([
+const ANDEX_HOST_TOOL_NAMES = new Set([
+  "phone_control",
+  "andex_archive",
+  "andex_web_search",
+  "andex_web_page",
+  "andex_github",
   "browser",
-  "aether_config_get",
-  "aether_config_set",
-  "aether_skill_manage",
-  "aether_termux_manage",
-  "aether_agent_mode_manage",
-  "aether_scheduled_task_manage",
-  "aether_extension_manage",
-  "aether_developer_manage",
-  "aether_runtime_manage",
+  "andex_config_get",
+  "andex_config_set",
+  "andex_skill_manage",
+  "andex_termux_manage",
+  "andex_agent_mode_manage",
+  "andex_scheduled_task_manage",
+  "andex_extension_manage",
+  "andex_developer_manage",
+  "andex_runtime_manage",
   "agent_display",
 ]);
-
 function runtimeForPayload(payload: JsonObject): "alpine" | "termux" {
   const explicit = asString(payload.runtime, asString(payload.runtime_id)).trim().toLowerCase();
   if (explicit === "termux") return "termux";
   if (explicit === "alpine") return "alpine";
   return asString(payload.platform).trim().toLowerCase() === "ios" ? "alpine" : "alpine";
 }
-
 function platformForPayload(payload: JsonObject): "android" | "ios" {
   return asString(payload.platform).trim().toLowerCase() === "ios" ? "ios" : "android";
 }
-
 function activeNativeToolNames(runtime: "alpine" | "termux"): string[] {
   return runtime === "termux"
     ? ["read", "bash", "edit", "write"]
     : ["read", "bash", "edit", "write", "grep", "find", "ls"];
 }
-
 function allowedHostToolDefinitions(rawTools: unknown, platform: "android" | "ios"): HostToolDefinition[] {
   return normalizeHostToolDefinitions(rawTools).filter((definition) => {
-    if (!AETHER_HOST_TOOL_NAMES.has(definition.name)) return false;
+    if (!ANDEX_HOST_TOOL_NAMES.has(definition.name)) return false;
     if (platform === "ios") {
       return new Set([
         "browser",
-        "aether_config_get",
-        "aether_config_set",
-        "aether_skill_manage",
-        "aether_extension_manage",
-        "aether_developer_manage",
+        "andex_config_get",
+        "andex_config_set",
+        "andex_skill_manage",
+        "andex_extension_manage",
+        "andex_developer_manage",
       ]).has(definition.name);
     }
     return true;
   });
 }
-
 function requestAgentHostTool(
   state: AgentSessionState,
   definition: HostToolDefinition,
@@ -1958,7 +1874,6 @@ function requestAgentHostTool(
     });
   });
 }
-
 function createAgentHostToolDefinition(
   state: AgentSessionState,
   definition: HostToolDefinition,
@@ -1973,7 +1888,6 @@ function createAgentHostToolDefinition(
       requestAgentHostTool(state, definition, toolCallId, args, signal, onUpdate),
   };
 }
-
 function requestRuntimeOperation(
   state: AgentSessionState,
   kind: string,
@@ -2055,7 +1969,6 @@ function requestRuntimeOperation(
     });
   });
 }
-
 function runtimeOperationChunk(payload: JsonObject): boolean {
   const operationId = asString(payload.operation_id).trim();
   const pending = pendingRuntimeOperations.get(operationId);
@@ -2064,7 +1977,6 @@ function runtimeOperationChunk(payload: JsonObject): boolean {
   if (encoded) pending.onChunk?.(Buffer.from(encoded, "base64"));
   return true;
 }
-
 function runtimeOperationResult(payload: JsonObject): boolean {
   const operationId = asString(payload.operation_id).trim();
   const pending = pendingRuntimeOperations.get(operationId);
@@ -2084,13 +1996,11 @@ function runtimeOperationResult(payload: JsonObject): boolean {
   }
   return true;
 }
-
 function nodeTemporaryOutputPath(filePath: string): boolean {
   const relative = path.relative(os.tmpdir(), filePath);
   return !relative.startsWith(`..${path.sep}`) && relative !== ".." &&
     path.basename(filePath).startsWith("pi-bash-");
 }
-
 function runtimePath(state: AgentSessionState, absolutePath: string): string {
   if (state.runtime !== "termux" || nodeTemporaryOutputPath(absolutePath)) return absolutePath;
   const relative = path.relative(state.workspaceDirectory, absolutePath);
@@ -2099,7 +2009,6 @@ function runtimePath(state: AgentSessionState, absolutePath: string): string {
   }
   return absolutePath;
 }
-
 async function detectLocalImageMimeType(absolutePath: string): Promise<string | undefined> {
   const handle = await fs.open(absolutePath, "r");
   try {
@@ -2116,7 +2025,6 @@ async function detectLocalImageMimeType(absolutePath: string): Promise<string | 
     await handle.close();
   }
 }
-
 function termuxReadOperations(state: AgentSessionState): ReadOperations {
   return {
     access: async (absolutePath) => {
@@ -2146,7 +2054,6 @@ function termuxReadOperations(state: AgentSessionState): ReadOperations {
     },
   };
 }
-
 function termuxEditOperations(state: AgentSessionState): EditOperations {
   const read = termuxReadOperations(state);
   return {
@@ -2162,7 +2069,6 @@ function termuxEditOperations(state: AgentSessionState): EditOperations {
     },
   };
 }
-
 function termuxWriteOperations(state: AgentSessionState): WriteOperations {
   return {
     mkdir: async (directory) => {
@@ -2178,7 +2084,6 @@ function termuxWriteOperations(state: AgentSessionState): WriteOperations {
     },
   };
 }
-
 function termuxBashOperations(state: AgentSessionState): BashOperations {
   return {
     exec: async (command, cwd, options) => {
@@ -2198,7 +2103,6 @@ function termuxBashOperations(state: AgentSessionState): BashOperations {
     },
   };
 }
-
 function dynamicReadOperations(state: AgentSessionState): ReadOperations {
   return {
     access: async (absolutePath) => {
@@ -2223,7 +2127,6 @@ function dynamicReadOperations(state: AgentSessionState): ReadOperations {
     },
   };
 }
-
 function dynamicEditOperations(state: AgentSessionState): EditOperations {
   const read = dynamicReadOperations(state);
   return {
@@ -2239,7 +2142,6 @@ function dynamicEditOperations(state: AgentSessionState): EditOperations {
     },
   };
 }
-
 function dynamicWriteOperations(state: AgentSessionState): WriteOperations {
   return {
     mkdir: async (directory) => {
@@ -2260,7 +2162,6 @@ function dynamicWriteOperations(state: AgentSessionState): WriteOperations {
     },
   };
 }
-
 function dynamicBashOperations(state: AgentSessionState): BashOperations {
   const local = createLocalBashOperations();
   return {
@@ -2269,7 +2170,6 @@ function dynamicBashOperations(state: AgentSessionState): BashOperations {
       : local.exec(command, cwd, options),
   };
 }
-
 function nativeToolDefinitions(state: AgentSessionState): ToolDefinition<any, any, any>[] {
   const cwd = state.workspaceDirectory;
   return [
@@ -2282,9 +2182,8 @@ function nativeToolDefinitions(state: AgentSessionState): ToolDefinition<any, an
     createLsToolDefinition(cwd),
   ];
 }
-
 function applyRuntimeToolResult(payload: JsonObject): void {
-  if (asString(payload.tool_name) !== "aether_runtime_manage" || asBoolean(payload.is_error, false)) return;
+  if (asString(payload.tool_name) !== "andex_runtime_manage" || asBoolean(payload.is_error, false)) return;
   const sessionId = asString(payload.session_id).trim();
   const state = agentSessions.get(sessionId);
   if (!state) return;
@@ -2299,20 +2198,19 @@ function applyRuntimeToolResult(payload: JsonObject): void {
   const runtime = asString(result.runtime).trim();
   if (runtime !== "alpine" && runtime !== "termux") return;
   state.runtime = runtime;
-  state.session.sessionManager.appendCustomEntry("aether_runtime", {
+  state.session.sessionManager.appendCustomEntry("andex_runtime", {
     runtime,
     cwd: runtime === "termux" ? state.termuxWorkspaceDirectory : state.workspaceDirectory,
   });
   setActiveSessionTools(state);
 }
-
-function sessionSettings(payload: JsonObject, config: ModelConfig): SettingsManager {
+function sessionSettings(payload: JsonObject, config: ModelConfig, contextWindow: number): SettingsManager {
   return SettingsManager.inMemory({
     defaultProvider: config.pi_provider_id,
     defaultModel: config.model_id,
     defaultThinkingLevel: thinkingLevelFor(payload) ?? "off",
     enableSkillCommands: true,
-    compaction: { enabled: true },
+    compaction: automaticCompactionSettings(contextWindow),
     retry: {
       enabled: true,
       maxRetries: Math.max(0, asNumber(payload.max_retries, config.max_retries ?? DEFAULT_AGENT_RETRY_MAX_RETRIES)),
@@ -2325,13 +2223,11 @@ function sessionSettings(payload: JsonObject, config: ModelConfig): SettingsMana
     images: { autoResize: true, blockImages: false },
   }, { projectTrusted: asBoolean(payload.workspace_trusted, false) });
 }
-
 function stringArray(value: unknown): string[] {
   return Array.isArray(value)
     ? value.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
     : [];
 }
-
 async function createSessionManager(
   sessionId: string,
   cwd: string,
@@ -2341,7 +2237,7 @@ async function createSessionManager(
   if (explicitFile) return { manager: SessionManager.open(explicitFile, undefined, cwd), existed: true };
   const sessionDirectory = asString(
     payload.session_directory,
-    path.join(os.homedir(), ".aether", "agent-sessions"),
+    path.join(os.homedir(), ".andex", "agent-sessions"),
   );
   await fs.mkdir(sessionDirectory, { recursive: true });
   const suffix = `_${sessionId}.jsonl`;
@@ -2360,24 +2256,23 @@ async function createSessionManager(
     existed: false,
   };
 }
-
-function extensionUiContext(): ExtensionUIContext {
+function extensionUiContext(sessionId: string): ExtensionUIContext {
   const unsupported = async () => undefined;
   return {
     select: async (title: string, options: string[]) => {
-      const result = await requestAetherHost("pi_extension_select", { title, options });
+      const result = await requestAndexHost("pi_extension_select", { title, options, session_id: sessionId });
       return asString(result.value).trim() || undefined;
     },
     confirm: async (title: string, message: string) => {
-      const result = await requestAetherHost("pi_extension_confirm", { title, message });
+      const result = await requestAndexHost("pi_extension_confirm", { title, message, session_id: sessionId });
       return asBoolean(result.value, false);
     },
     input: async (title: string, placeholder?: string) => {
-      const result = await requestAetherHost("pi_extension_input", { title, placeholder: placeholder ?? "" });
+      const result = await requestAndexHost("pi_extension_input", { title, placeholder: placeholder ?? "", session_id: sessionId });
       return asString(result.value) || undefined;
     },
     notify: (message: string, type?: "info" | "warning" | "error") => {
-      void requestAetherHost("pi_extension_notify", { message, type: type ?? "info" });
+      void requestAndexHost("pi_extension_notify", { message, type: type ?? "info" });
     },
     onTerminalInput: () => () => undefined,
     setStatus: () => undefined,
@@ -2396,17 +2291,16 @@ function extensionUiContext(): ExtensionUIContext {
     setEditorComponent: () => undefined,
     getTheme: () => undefined,
     getAllThemes: () => [],
-    setTheme: () => ({ success: false, error: "Pi TUI components are unavailable in Aether." }),
+    setTheme: () => ({ success: false, error: "Pi TUI components are unavailable in Andex." }),
     getToolsExpanded: () => false,
     setToolsExpanded: () => undefined,
   } as unknown as ExtensionUIContext;
 }
-
-const aetherChromeExtensionFactory: ExtensionFactory = (pi) => {
+const andexChromeExtensionFactory: ExtensionFactory = (pi) => {
   pi.registerTool({
     name: "browser",
     label: "Browser",
-    description: "Control Aether's Chromium browser. Prefer CSS selectors and DOM-reading actions; use normalized coordinates only as a fallback.",
+    description: "Control Andex's Chromium browser. Prefer CSS selectors and DOM-reading actions; use normalized coordinates only as a fallback.",
     promptSnippet: "control the optional browser",
     executionMode: "sequential",
     parameters: Type.Object({
@@ -2430,7 +2324,7 @@ const aetherChromeExtensionFactory: ExtensionFactory = (pi) => {
     }),
     execute: async (_toolCallId, params, signal) => {
       if (signal?.aborted) throw new Error("Browser operation was cancelled.");
-      const result = await requestAetherHost("aether_chrome_execute", { arguments: params as JsonObject });
+      const result = await requestAndexHost("andex_chrome_execute", { arguments: params as JsonObject });
       const screenshot = asString(result.screenshot_base64).trim();
       const visible = { ...result };
       delete visible.screenshot_base64;
@@ -2449,15 +2343,16 @@ const aetherChromeExtensionFactory: ExtensionFactory = (pi) => {
     },
   });
 };
-
 function setActiveSessionTools(state: AgentSessionState): void {
   const nativeNames = new Set(["read", "bash", "edit", "write", "grep", "find", "ls"]);
   const nonNative = state.session.getActiveToolNames()
     .filter((name) => !nativeNames.has(name))
     .filter((name) => name !== "browser" || state.chromeEnabled || state.platform === "ios");
+  if (state.platform === "android" &&
+    state.session.getAllTools().some((tool) => tool.name === "phone_control") &&
+    !nonNative.includes("phone_control")) nonNative.push("phone_control");
   state.session.setActiveToolsByName([...activeNativeToolNames(state.runtime), ...nonNative]);
 }
-
 function emptyTurnUsage(): TurnUsageTotals {
   return {
     inputTokens: 0,
@@ -2470,13 +2365,11 @@ function emptyTurnUsage(): TurnUsageTotals {
     requestCount: 0,
   };
 }
-
 function resetTurnUsage(state: AgentSessionState): void {
   state.turnUsage = emptyTurnUsage();
   state.outputStartedAtMillis = undefined;
   state.outputDurationMillis = 0;
 }
-
 function trackTurnUsage(state: AgentSessionState, event: AgentSessionEvent): void {
   if (event.type === "message_update" && event.message.role === "assistant") {
     if (state.outputStartedAtMillis === undefined) {
@@ -2512,7 +2405,6 @@ function trackTurnUsage(state: AgentSessionState, event: AgentSessionEvent): voi
     state.outputStartedAtMillis = undefined;
   }
 }
-
 function turnUsagePayload(state: AgentSessionState): JsonObject {
   const totals = state.turnUsage;
   if (totals.requestCount === 0) return {};
@@ -2528,7 +2420,6 @@ function turnUsagePayload(state: AgentSessionState): JsonObject {
   if (totals.reasoningReported) payload.reasoning_tokens = totals.reasoningTokens;
   return payload;
 }
-
 function emitAgentSessionEvent(state: AgentSessionState, event: AgentSessionEvent): void {
   const requestId = state.currentRequestId;
   if (!requestId) {
@@ -2615,7 +2506,6 @@ function emitAgentSessionEvent(state: AgentSessionState, event: AgentSessionEven
       return;
   }
 }
-
 function nativeExtensionPathIsDisabled(candidatePath: string, disabledPaths: Set<string>): boolean {
   const candidate = path.resolve(candidatePath);
   return [...disabledPaths].some((disabledPath) => {
@@ -2627,7 +2517,6 @@ function nativeExtensionPathIsDisabled(candidatePath: string, disabledPaths: Set
     );
   });
 }
-
 async function resolveNativeExtensionSet(
   workspaceDirectory: string,
   configuredExtensionPaths: string[],
@@ -2636,7 +2525,7 @@ async function resolveNativeExtensionSet(
   const disabledPaths = new Set(
     loadOptions.disabledExtensionPaths.map((entry) => path.resolve(entry)),
   );
-  const discoveredPaths = discoverAetherExtensionPaths(
+  const discoveredPaths = discoverAndexExtensionPaths(
     workspaceDirectory,
     configuredExtensionPaths,
   ).filter((candidate) => !nativeExtensionPathIsDisabled(candidate, disabledPaths));
@@ -2650,7 +2539,6 @@ async function resolveNativeExtensionSet(
     signature: JSON.stringify(extensionPaths),
   };
 }
-
 async function createNativeAgentSession(
   sessionId: string,
   payload: JsonObject,
@@ -2662,7 +2550,7 @@ async function createNativeAgentSession(
   let runtime = runtimeForPayload(payload);
   const platform = platformForPayload(payload);
   const built = await buildModelRuntime(config);
-  const settingsManager = sessionSettings(payload, config);
+  const settingsManager = sessionSettings(payload, config, built.model.contextWindow);
   const agentDir = asString(payload.agent_directory, path.join(os.homedir(), ".pi", "agent"));
   const configuredExtensionPaths = stringArray(payload.extension_paths);
   // Extension files are part of the session's tool registry. Include the
@@ -2682,7 +2570,7 @@ async function createNativeAgentSession(
     agentDir,
     settingsManager,
     additionalExtensionPaths,
-    extensionFactories: platform === "android" ? [aetherChromeExtensionFactory] : [],
+    extensionFactories: [persistentMemoryExtension, ...(platform === "android" ? [andexChromeExtensionFactory] : [])],
     additionalSkillPaths: stringArray(payload.skill_paths),
     appendSystemPrompt: [asString(payload.system_prompt)].filter(Boolean),
   });
@@ -2693,7 +2581,7 @@ async function createNativeAgentSession(
   if (!existed) history.forEach((message) => manager.appendMessage(message as never));
   if (existed) {
     const runtimeEntry = manager.getEntries().findLast((entry) =>
-      entry.type === "custom" && entry.customType === "aether_runtime"
+      entry.type === "custom" && entry.customType === "andex_runtime"
     );
     if (runtimeEntry?.type === "custom") {
       const persistedRuntime = asString(asObject(runtimeEntry.data).runtime);
@@ -2704,6 +2592,7 @@ async function createNativeAgentSession(
     sessionId,
     configSignature: modelConfigSignature(config),
     toolSignature: hostToolSignature(allowedHostToolDefinitions(payload.host_tools, platform)),
+    systemPrompt: asString(payload.system_prompt),
     extensionSignature,
     skillSignature: JSON.stringify(stringArray(payload.skill_paths).sort()),
     workspaceDirectory,
@@ -2751,7 +2640,7 @@ async function createNativeAgentSession(
     emitAgentSessionEvent(state, event);
   });
   await state.session.bindExtensions({
-    uiContext: extensionUiContext(),
+    uiContext: extensionUiContext(sessionId),
     mode: "rpc",
     onError: (error) => {
       if (state.currentRequestId) {
@@ -2767,7 +2656,6 @@ async function createNativeAgentSession(
   agentSessions.set(sessionId, state);
   return state;
 }
-
 async function listDiscoveredSkills(payload: JsonObject): Promise<JsonObject> {
   const workspaceDirectory = asString(payload.workspace_directory, process.cwd()) || process.cwd();
   const agentDir = asString(payload.agent_directory, path.join(os.homedir(), ".pi", "agent"));
@@ -2787,7 +2675,7 @@ async function listDiscoveredSkills(payload: JsonObject): Promise<JsonObject> {
   await resourceLoader.reload({
     resolveProjectTrust: async () => asBoolean(payload.workspace_trusted, true),
   });
-  const managedRoot = path.resolve(workspaceDirectory, ".aether", "skills");
+  const managedRoot = path.resolve(workspaceDirectory, ".andex", "skills");
   const skills = resourceLoader.getSkills().skills
     .filter((skill) => {
       const relative = path.relative(managedRoot, path.resolve(skill.filePath));
@@ -2806,7 +2694,6 @@ async function listDiscoveredSkills(payload: JsonObject): Promise<JsonObject> {
     }));
   return { skills };
 }
-
 function rejectPendingHostToolsForAgentSession(sessionId: string, message: string): void {
   for (const [toolRequestId, pending] of pendingHostToolRequests) {
     if (pending.sessionId !== sessionId) continue;
@@ -2814,7 +2701,6 @@ function rejectPendingHostToolsForAgentSession(sessionId: string, message: strin
     pendingHostToolRequests.delete(toolRequestId);
   }
 }
-
 function nativeBridgePrompt(rawMessage: unknown): { text: string; images: ImageContent[] } {
   const messages = normalizeMessages([rawMessage]);
   const message = messages[0];
@@ -2828,7 +2714,6 @@ function nativeBridgePrompt(rawMessage: unknown): { text: string; images: ImageC
     images: message.content.filter((part): part is ImageContent => part.type === "image"),
   };
 }
-
 async function closeNativeAgentSession(sessionId: string): Promise<boolean> {
   const state = agentSessions.get(sessionId);
   if (!state) return false;
@@ -2843,7 +2728,6 @@ async function closeNativeAgentSession(sessionId: string): Promise<boolean> {
   state.session.dispose();
   return true;
 }
-
 function nativeSessionFromPayload(payload: JsonObject): AgentSessionState {
   const sessionId = asString(payload.session_id).trim();
   if (!sessionId) throw new Error("session_id is required for Pi AgentSession operations.");
@@ -2851,7 +2735,6 @@ function nativeSessionFromPayload(payload: JsonObject): AgentSessionState {
   if (!state) throw new Error(`Unknown Pi session: ${sessionId}`);
   return state;
 }
-
 async function ensureNativeSessionForRequest(payload: JsonObject): Promise<AgentSessionState> {
   const sessionId = asString(payload.session_id).trim();
   if (!sessionId) throw new Error("session_id is required for Pi AgentSession operations.");
@@ -2861,7 +2744,6 @@ async function ensureNativeSessionForRequest(payload: JsonObject): Promise<Agent
   if (!config) throw new Error(`Unknown Pi session: ${sessionId}`);
   return createNativeAgentSession(sessionId, payload, config, []);
 }
-
 function nativeSessionPayload(state: AgentSessionState): JsonObject {
   return {
     session_id: state.session.sessionId,
@@ -2884,7 +2766,6 @@ function nativeSessionPayload(state: AgentSessionState): JsonObject {
     tree: state.session.sessionManager.getTree(),
   };
 }
-
 async function compactNativeAgentSession(id: string, payload: JsonObject): Promise<JsonObject> {
   const state = await ensureNativeSessionForRequest(payload);
   if (!state.session.isIdle) throw new Error("Cannot manually compact a busy Pi AgentSession.");
@@ -2898,11 +2779,10 @@ async function compactNativeAgentSession(id: string, payload: JsonObject): Promi
     if (state.currentRequestId === id) state.currentRequestId = "";
   }
 }
-
 async function navigateNativeAgentSession(id: string, payload: JsonObject): Promise<JsonObject> {
   // The AgentSession map is process-local. Reopen the persisted JSONL session
   // when the bridge was restarted, provided the caller supplies its model
-  // configuration (the normal Aether navigation path does).
+  // configuration (the normal Andex navigation path does).
   const state = await ensureNativeSessionForRequest(payload);
   if (!state.session.isIdle) throw new Error("Cannot navigate a busy Pi AgentSession.");
   const entryId = asString(payload.entry_id).trim();
@@ -2929,7 +2809,6 @@ async function navigateNativeAgentSession(id: string, payload: JsonObject): Prom
     if (state.currentRequestId === id) state.currentRequestId = "";
   }
 }
-
 async function reloadNativeAgentSession(payload: JsonObject): Promise<JsonObject> {
   const state = nativeSessionFromPayload(payload);
   if (!state.session.isIdle) {
@@ -2939,7 +2818,6 @@ async function reloadNativeAgentSession(payload: JsonObject): Promise<JsonObject
   await state.session.reload();
   return { ...nativeSessionPayload(state), reloaded: true, scheduled: false };
 }
-
 function exportNativeAgentSession(payload: JsonObject): JsonObject {
   const state = nativeSessionFromPayload(payload);
   const outputPath = asString(payload.output_path).trim() || undefined;
@@ -2948,7 +2826,6 @@ function exportNativeAgentSession(payload: JsonObject): JsonObject {
     exported_path: state.session.exportToJsonl(outputPath),
   };
 }
-
 async function importNativeAgentSession(payload: JsonObject): Promise<JsonObject> {
   const sessionId = asString(payload.session_id).trim();
   const jsonl = asString(payload.jsonl);
@@ -2965,7 +2842,7 @@ async function importNativeAgentSession(payload: JsonObject): Promise<JsonObject
   }
   const sessionDirectory = asString(
     payload.session_directory,
-    path.join(os.homedir(), ".aether", "agent-sessions"),
+    path.join(os.homedir(), ".andex", "agent-sessions"),
   );
   await fs.mkdir(sessionDirectory, { recursive: true });
   const target = path.join(sessionDirectory, `${Date.now()}_${sessionId}.jsonl`);
@@ -2975,7 +2852,6 @@ async function importNativeAgentSession(payload: JsonObject): Promise<JsonObject
   await closeNativeAgentSession(sessionId);
   return { imported: true, session_id: sessionId, session_file: target };
 }
-
 async function prepareNativeAgentSession(
   payload: JsonObject,
   history: AgentMessage[],
@@ -3000,6 +2876,7 @@ async function prepareNativeAgentSession(
   const reusable = existing &&
     existing.configSignature === modelConfigSignature(config) &&
     existing.toolSignature === signature &&
+    existing.systemPrompt === asString(payload.system_prompt) &&
     existing.extensionSignature === extensionSignature &&
     existing.skillSignature === skillSignature &&
     existing.workspaceDirectory === workspaceDirectory &&
@@ -3013,7 +2890,6 @@ async function prepareNativeAgentSession(
   setActiveSessionTools(existing);
   return { state: existing, reused: true };
 }
-
 async function runNativeAgentPrompt(
   id: string,
   state: AgentSessionState,
@@ -3025,9 +2901,9 @@ async function runNativeAgentPrompt(
   state.lastAccessedAt = Date.now();
   if (resetUsage) resetTurnUsage(state);
   activeAborters.set(id, () => state.session.abort());
-  activeAetherOperationRequestIds.add(id);
+  activeAndexOperationRequestIds.add(id);
   try {
-    await aetherOperationContext.run(id, () =>
+    await andexOperationContext.run(id, () =>
       state.session.prompt(text, { images: images.length > 0 ? images : undefined }),
     );
     await state.session.waitForIdle();
@@ -3036,12 +2912,11 @@ async function runNativeAgentPrompt(
     return message;
   } finally {
     activeAborters.delete(id);
-    activeAetherOperationRequestIds.delete(id);
+    activeAndexOperationRequestIds.delete(id);
     if (state.currentRequestId === id) state.currentRequestId = "";
     state.lastAccessedAt = Date.now();
   }
 }
-
 async function runNativeAgentTurn(id: string, payload: JsonObject): Promise<JsonObject> {
   const messages = normalizeMessages(payload.messages);
   const prompt = promptFromLastUserMessage(messages);
@@ -3069,7 +2944,6 @@ async function runNativeAgentTurn(id: string, payload: JsonObject): Promise<Json
       state.compatibilityFallbackState.developerRoleUnsupportedDetected,
   };
 }
-
 async function steerNativeAgentSession(payload: JsonObject): Promise<JsonObject> {
   const state = agentSessions.get(asString(payload.session_id).trim());
   if (!state || !state.session.isStreaming) return { accepted: false };
@@ -3077,7 +2951,6 @@ async function steerNativeAgentSession(payload: JsonObject): Promise<JsonObject>
   await state.session.steer(prompt.text, prompt.images);
   return { accepted: true };
 }
-
 async function followUpNativeAgentSession(id: string, payload: JsonObject): Promise<JsonObject> {
   const state = agentSessions.get(asString(payload.session_id).trim());
   if (!state) throw new Error(`Unknown Pi session: ${asString(payload.session_id)}`);
@@ -3103,7 +2976,6 @@ async function followUpNativeAgentSession(id: string, payload: JsonObject): Prom
       state.compatibilityFallbackState.developerRoleUnsupportedDetected,
   };
 }
-
 async function runSimpleCompletion(id: string, payload: JsonObject, stream: boolean): Promise<JsonObject> {
   const config = normalizeModelConfig(payload.model_config ?? defaultModelConfig);
   const { models, model, credentialStore, compatibilityFallbackState } = buildModels(config);
@@ -3136,7 +3008,6 @@ async function runSimpleCompletion(id: string, payload: JsonObject, stream: bool
     activeAborters.delete(id);
   }
 }
-
 function requestAuthPrompt(
   requestId: string,
   prompt: {
@@ -3178,7 +3049,6 @@ function requestAuthPrompt(
     });
   });
 }
-
 function resolveAuthPrompt(payload: JsonObject): boolean {
   const promptId = asString(payload.prompt_id).trim();
   const pending = promptId ? pendingAuthPrompts.get(promptId) : undefined;
@@ -3191,7 +3061,6 @@ function resolveAuthPrompt(payload: JsonObject): boolean {
   }
   return true;
 }
-
 async function loginProvider(id: string, payload: JsonObject): Promise<JsonObject> {
   const providerConfigId = asString(payload.provider_config_id).trim();
   if (!providerConfigId) throw new Error("provider_config_id is required for provider login.");
@@ -3276,13 +3145,11 @@ async function loginProvider(id: string, payload: JsonObject): Promise<JsonObjec
     }
   }
 }
-
 async function clearProviderCredential(payload: JsonObject): Promise<JsonObject> {
   const providerConfigId = asString(payload.provider_config_id).trim();
   if (!providerConfigId) throw new Error("provider_config_id is required to clear provider credentials.");
   return { cleared: await clearSharedCredential(providerConfigId) };
 }
-
 async function closeAgentSessionRequest(payload: JsonObject): Promise<JsonObject> {
   const sessionId = asString(payload.session_id).trim();
   if (!sessionId) throw new Error("session_id is required to close a Pi AgentSession.");
@@ -3302,7 +3169,6 @@ async function closeAgentSessionRequest(payload: JsonObject): Promise<JsonObject
   }
   return { closed, deleted, session_file: sessionFile };
 }
-
 function extensionRuntimePayload(state: AgentSessionState): JsonObject {
   const runner = state.session.extensionRunner;
   const loaded = state.resourceLoader.getExtensions();
@@ -3327,7 +3193,6 @@ function extensionRuntimePayload(state: AgentSessionState): JsonObject {
     custom_tui_supported: false,
   };
 }
-
 function extensionSessionFromPayload(payload: JsonObject): AgentSessionState {
   const sessionId = asString(payload.session_id).trim();
   if (!sessionId) throw new Error("session_id is required for Pi extension operations.");
@@ -3335,11 +3200,9 @@ function extensionSessionFromPayload(payload: JsonObject): AgentSessionState {
   if (!state) throw new Error(`Unknown Pi session: ${sessionId}`);
   return state;
 }
-
 async function listExtensions(payload: JsonObject): Promise<JsonObject> {
   return extensionRuntimePayload(extensionSessionFromPayload(payload));
 }
-
 async function reloadExtensions(payload: JsonObject): Promise<JsonObject> {
   const state = extensionSessionFromPayload(payload);
   const scheduled = !state.session.isIdle;
@@ -3351,7 +3214,6 @@ async function reloadExtensions(payload: JsonObject): Promise<JsonObject> {
     scheduled,
   };
 }
-
 async function invokeExtensionCommand(payload: JsonObject): Promise<JsonObject> {
   const state = extensionSessionFromPayload(payload);
   const commandName = asString(payload.command).trim().replace(/^\//, "");
@@ -3366,10 +3228,9 @@ async function invokeExtensionCommand(payload: JsonObject): Promise<JsonObject> 
     pending_reload: state.pendingReload,
   };
 }
-
 async function installedExtensionPackagesPayload(): Promise<JsonObject> {
   return {
-    packages: (await listAetherExtensionPackages(process.cwd())).map((installedPackage) => ({
+    packages: (await listAndexExtensionPackages(process.cwd())).map((installedPackage) => ({
       source: installedPackage.source,
       scope: installedPackage.scope,
       filtered: installedPackage.filtered,
@@ -3378,7 +3239,7 @@ async function installedExtensionPackagesPayload(): Promise<JsonObject> {
       version: installedPackage.version,
       description: installedPackage.description,
       extension_count: installedPackage.extensionCount,
-      aether_extension_count: installedPackage.aetherExtensionCount,
+      andex_extension_count: installedPackage.andexExtensionCount,
       native_entrypoint_count: installedPackage.nativeEntrypointCount,
       skill_count: installedPackage.skillCount,
       prompt_count: installedPackage.promptCount,
@@ -3387,18 +3248,17 @@ async function installedExtensionPackagesPayload(): Promise<JsonObject> {
     })),
   };
 }
-
 async function reloadAllExtensionSessions(
   payload: JsonObject = {},
 ): Promise<JsonObject> {
   const loadOptions = nativeExtensionLoadOptionsFromPayload(payload);
-  // Preinstalled packages can provide both Pi and Aether entrypoints. Resolve
+  // Preinstalled packages can provide both Pi and Andex entrypoints. Resolve
   // their npm dependencies before reloading native Pi sessions so both loaders
   // observe the same ready package tree.
-  const skipAetherExtensions = asBoolean(payload.skip_aether_extensions, false);
-  const aetherReload = skipAetherExtensions
+  const skipAndexExtensions = asBoolean(payload.skip_andex_extensions, false);
+  const andexReload = skipAndexExtensions
     ? { reloaded: false, errors: [] }
-    : await loadAetherAppExtensions(process.cwd(), loadOptions);
+    : await loadAndexAppExtensions(process.cwd(), loadOptions);
   const results: JsonObject[] = [];
   for (const state of [...agentSessions.values()]) {
     const { signature: extensionSignature } = await resolveNativeExtensionSet(
@@ -3431,17 +3291,16 @@ async function reloadAllExtensionSessions(
     result.reloaded === true || result.scheduled === true
   );
   return {
-    // Aether Script extensions are reloaded independently. Keep the session
-    // operation usable when one unrelated Aether extension remains broken; its
-    // details are still returned in aether_reload.errors for diagnostics.
+    // Andex Script extensions are reloaded independently. Keep the session
+    // operation usable when one unrelated Andex extension remains broken; its
+    // details are still returned in andex_reload.errors for diagnostics.
     succeeded: sessionReloadSucceeded,
     session_count: results.length,
     sessions: results,
-    aether_reload: aetherReload,
-    aether: skipAetherExtensions ? {} : await aetherAppExtensionSnapshot(),
+    andex_reload: andexReload,
+    andex: skipAndexExtensions ? {} : await andexAppExtensionSnapshot(),
   };
 }
-
 function nativeExtensionLoadOptionsFromPayload(payload: JsonObject): {
   disabledExtensionPaths: string[];
   disabledPackageSources: string[];
@@ -3456,93 +3315,93 @@ function nativeExtensionLoadOptionsFromPayload(payload: JsonObject): {
   }
   return currentExtensionLoadOptions;
 }
-
-async function installExtensionPackage(payload: JsonObject): Promise<JsonObject> {
+async function installExtensionPackage(id: string, payload: JsonObject): Promise<JsonObject> {
   const source = asString(payload.source).trim();
-  await installAetherExtensionPackage(process.cwd(), source);
+  const progress = (phase: string) => writeEvent(id, "extension_package_progress", { phase, source });
+  await installAndexExtensionPackage(process.cwd(), source, progress);
+  progress("reloading");
+  const reload = await reloadAllExtensionSessions(payload);
+  progress("refreshing");
   return {
     installed: true,
     source,
     ...(await installedExtensionPackagesPayload()),
-    reload: await reloadAllExtensionSessions(payload),
+    reload,
   };
 }
-
 async function removeExtensionPackage(payload: JsonObject): Promise<JsonObject> {
   const source = asString(payload.source).trim();
-  const removed = await removeAetherExtensionPackage(process.cwd(), source);
+  const removed = await removeAndexExtensionPackage(process.cwd(), source);
   return {
     removed,
     source,
     ...(await installedExtensionPackagesPayload()),
   };
 }
-
-async function updateExtensionPackage(payload: JsonObject): Promise<JsonObject> {
+async function updateExtensionPackage(id: string, payload: JsonObject): Promise<JsonObject> {
   const source = asString(payload.source).trim();
-  await updateAetherExtensionPackage(process.cwd(), source);
+  const progress = (phase: string) => writeEvent(id, "extension_package_progress", { phase, source });
+  await updateAndexExtensionPackage(process.cwd(), source, progress);
+  progress("reloading");
+  const reload = await reloadAllExtensionSessions(payload);
+  progress("refreshing");
   return {
     updated: true,
     source,
     ...(await installedExtensionPackagesPayload()),
-    reload: await reloadAllExtensionSessions(payload),
+    reload,
   };
 }
-
-async function reloadAetherAppExtensionsRequest(
+async function reloadAndexAppExtensionsRequest(
   id: string,
   payload: JsonObject,
 ): Promise<JsonObject> {
-  return runAetherOperation(id, async () => {
-    const result = await loadAetherAppExtensions(
+  return runAndexOperation(id, async () => {
+    const result = await loadAndexAppExtensions(
       process.cwd(),
       nativeExtensionLoadOptionsFromPayload(payload),
     );
     return {
       ...result,
-      snapshot: await aetherAppExtensionSnapshot(asObject(payload.context)),
+      snapshot: await andexAppExtensionSnapshot(asObject(payload.context)),
     };
   });
 }
-
-async function getAetherAppExtensionsRequest(
+async function getAndexAppExtensionsRequest(
   id: string,
   payload: JsonObject,
 ): Promise<JsonObject> {
-  return runAetherOperation(id, async () => ({
-    snapshot: await aetherAppExtensionSnapshot(asObject(payload.context)),
+  return runAndexOperation(id, async () => ({
+    snapshot: await andexAppExtensionSnapshot(asObject(payload.context)),
   }));
 }
-
-async function invokeAetherAppExtensionActionRequest(
+async function invokeAndexAppExtensionActionRequest(
   id: string,
   payload: JsonObject,
 ): Promise<JsonObject> {
-  return runAetherOperation(id, async () => ({
-    ...(await invokeAetherAppExtensionAction(
+  return runAndexOperation(id, async () => ({
+    ...(await invokeAndexAppExtensionAction(
       asString(payload.extension_id),
       asString(payload.action),
       asObject(payload.args),
       asObject(payload.context),
     )),
-    snapshot: await aetherAppExtensionSnapshot(asObject(payload.context)),
+    snapshot: await andexAppExtensionSnapshot(asObject(payload.context)),
   }));
 }
-
-async function dispatchAetherAppExtensionEventRequest(
+async function dispatchAndexAppExtensionEventRequest(
   id: string,
   payload: JsonObject,
 ): Promise<JsonObject> {
-  return runAetherOperation(id, async () => ({
-    ...(await dispatchAetherAppExtensionEvent(
+  return runAndexOperation(id, async () => ({
+    ...(await dispatchAndexAppExtensionEvent(
       asString(payload.event),
       asObject(payload.data),
       asObject(payload.context),
     )),
-    snapshot: await aetherAppExtensionSnapshot(asObject(payload.context)),
+    snapshot: await andexAppExtensionSnapshot(asObject(payload.context)),
   }));
 }
-
 async function abortBridgeTarget(payload: JsonObject): Promise<JsonObject> {
   const targetId = asString(payload.request_id, asString(payload.target_id)).trim();
   const sessionId = asString(payload.session_id).trim();
@@ -3577,7 +3436,6 @@ async function abortBridgeTarget(payload: JsonObject): Promise<JsonObject> {
   }
   return { aborted: Boolean(aborter || state) };
 }
-
 async function handleRequest(request: BridgeRequest): Promise<void> {
   const id = asString(request.id);
   const type = asString(request.type);
@@ -3652,39 +3510,39 @@ async function handleRequest(request: BridgeRequest): Promise<void> {
       writeResponse(id, await listDiscoveredSkills(payload));
       return;
     case "install_extension_package":
-      writeResponse(id, await installExtensionPackage(payload));
+      writeResponse(id, await installExtensionPackage(id, payload));
       return;
     case "remove_extension_package":
       writeResponse(id, await removeExtensionPackage(payload));
       return;
     case "update_extension_package":
-      writeResponse(id, await updateExtensionPackage(payload));
+      writeResponse(id, await updateExtensionPackage(id, payload));
       return;
     case "reload_all_extensions":
       writeResponse(id, await reloadAllExtensionSessions(payload));
       return;
-    case "reload_aether_extensions":
-      writeResponse(id, await reloadAetherAppExtensionsRequest(id, payload));
+    case "reload_andex_extensions":
+      writeResponse(id, await reloadAndexAppExtensionsRequest(id, payload));
       return;
-    case "get_aether_extensions":
-      writeResponse(id, await getAetherAppExtensionsRequest(id, payload));
+    case "get_andex_extensions":
+      writeResponse(id, await getAndexAppExtensionsRequest(id, payload));
       return;
-    case "invoke_aether_extension_action":
-      writeResponse(id, await invokeAetherAppExtensionActionRequest(id, payload));
+    case "invoke_andex_extension_action":
+      writeResponse(id, await invokeAndexAppExtensionActionRequest(id, payload));
       return;
-    case "dispatch_aether_extension_event":
-      writeResponse(id, await dispatchAetherAppExtensionEventRequest(id, payload));
+    case "dispatch_andex_extension_event":
+      writeResponse(id, await dispatchAndexAppExtensionEventRequest(id, payload));
       return;
-    case "subscribe_aether_extensions":
-      aetherSubscriberRequestIds.add(id);
-      writeEvent(id, "aether_invalidated", { subscribed: true });
+    case "subscribe_andex_extensions":
+      andexSubscriberRequestIds.add(id);
+      writeEvent(id, "andex_invalidated", { subscribed: true });
       return;
-    case "unsubscribe_aether_extensions":
-      aetherSubscriberRequestIds.delete(asString(payload.request_id, id));
+    case "unsubscribe_andex_extensions":
+      andexSubscriberRequestIds.delete(asString(payload.request_id, id));
       writeResponse(id, { unsubscribed: true });
       return;
-    case "aether_host_result":
-      writeResponse(id, { accepted: resolveAetherHostCall(payload) });
+    case "andex_host_result":
+      writeResponse(id, { accepted: resolveAndexHostCall(payload) });
       return;
     case "steer":
       writeResponse(id, await steerNativeAgentSession(payload));
@@ -3721,7 +3579,6 @@ async function handleRequest(request: BridgeRequest): Promise<void> {
       throw new Error(`Unsupported request type: ${type}`);
   }
 }
-
 async function main(): Promise<void> {
   if (process.argv.includes("--ping")) {
     writeFrame({
@@ -3738,7 +3595,6 @@ async function main(): Promise<void> {
     });
     return;
   }
-
   const reader = createInterface({ input, crlfDelay: Infinity });
   for await (const line of reader) {
     if (!line.trim()) continue;
@@ -3758,7 +3614,6 @@ async function main(): Promise<void> {
     );
   }
 }
-
 main().catch((error) => {
   stderr.write(`pi-bridge fatal: ${error instanceof Error ? error.stack ?? error.message : String(error)}\n`);
   process.exitCode = 1;

@@ -1,23 +1,20 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { randomUUID } from "node:crypto";
 import { DefaultPackageManager } from "../node_modules/@earendil-works/pi-coding-agent/dist/core/package-manager.js";
-import { SettingsManager } from "../node_modules/@earendil-works/pi-coding-agent/dist/core/settings-manager.js";
+import { FileSettingsStorage, SettingsManager } from "../node_modules/@earendil-works/pi-coding-agent/dist/core/settings-manager.js";
 import { loadSkills } from "../node_modules/@earendil-works/pi-coding-agent/dist/core/skills.js";
-import { aetherAppExtensionCountForManifest } from "./aether-extensions.js";
-
+import { andexAppExtensionCountForManifest } from "./andex-extensions.js";
 const PI_AGENT_DIRECTORY = path.join(os.homedir(), ".pi", "agent");
-
 type ConfiguredPackage = ReturnType<DefaultPackageManager["listConfiguredPackages"]>[number];
 type ResolvedPaths = Awaited<ReturnType<DefaultPackageManager["resolve"]>>;
-
 interface PackageResources {
   extensions: string[];
   skills: string[];
   prompts: string[];
   themes: string[];
 }
-
 export interface InstalledExtensionPackage {
   source: string;
   scope: "user" | "project";
@@ -27,14 +24,13 @@ export interface InstalledExtensionPackage {
   version: string;
   description: string;
   extensionCount: number;
-  aetherExtensionCount: number;
+  andexExtensionCount: number;
   nativeEntrypointCount: number;
   skillCount: number;
   promptCount: number;
   themeCount: number;
   skillPaths: string[];
 }
-
 function readJsonFile(filePath: string): Record<string, unknown> | undefined {
   try {
     const parsed = JSON.parse(fs.readFileSync(filePath, "utf8"));
@@ -45,22 +41,57 @@ function readJsonFile(filePath: string): Record<string, unknown> | undefined {
     return undefined;
   }
 }
-
 function createPackageManager(
   cwd: string,
   agentDirectory: string = PI_AGENT_DIRECTORY,
   projectTrusted = false,
 ): DefaultPackageManager {
-  const settingsManager = SettingsManager.create(cwd, agentDirectory, {
-    projectTrusted,
-  });
+  const settingsManager = createPackageSettings(cwd, agentDirectory, projectTrusted);
   return new DefaultPackageManager({
     cwd,
     agentDir: agentDirectory,
     settingsManager,
   });
 }
-
+// Keep the SDK's interprocess lock, but replace truncating writes with an atomic
+// rename. Killing the runtime during an install must not erase all package sources.
+function createPackageSettings(cwd: string, agentDirectory: string, projectTrusted = false): SettingsManager {
+  const storage = new FileSettingsStorage(cwd, agentDirectory);
+  const manager = SettingsManager.fromStorage({
+    withLock(scope, update) {
+      storage.withLock(scope, (current) => {
+        const next = update(current);
+        if (next === undefined) return undefined;
+        const target = scope === "global"
+          ? path.join(agentDirectory, "settings.json")
+          : path.join(cwd, ".pi", "settings.json");
+        fs.mkdirSync(path.dirname(target), { recursive: true });
+        const temporary = `${target}.${randomUUID()}.tmp`;
+        try {
+          const descriptor = fs.openSync(temporary, "wx", 0o600);
+          try {
+            fs.writeFileSync(descriptor, next, "utf8");
+            fs.fsyncSync(descriptor);
+          } finally {
+            fs.closeSync(descriptor);
+          }
+          fs.renameSync(temporary, target);
+        } finally {
+          fs.rmSync(temporary, { force: true });
+        }
+        return undefined;
+      });
+    },
+  }, { projectTrusted });
+  const failure = manager.drainErrors()[0];
+  if (failure) throw failure.error;
+  return manager;
+}
+async function flushPackageSettings(manager: SettingsManager): Promise<void> {
+  await manager.flush();
+  const failure = manager.drainErrors()[0];
+  if (failure) throw failure.error;
+}
 export async function listDiscoveredSkills(
   cwd: string,
   agentDirectory: string = PI_AGENT_DIRECTORY,
@@ -74,7 +105,7 @@ export async function listDiscoveredSkills(
   scope: string;
   origin: string;
 }>> {
-  const managedRoot = path.resolve(cwd, ".aether", "skills");
+  const managedRoot = path.resolve(cwd, ".andex", "skills");
   const resolved = await createPackageManager(cwd, agentDirectory, true).resolve();
   const resources = resolved.skills.filter((resource) => {
     if (!resource.enabled || resource.metadata.origin === "package") return false;
@@ -111,12 +142,10 @@ export async function listDiscoveredSkills(
     };
   });
 }
-
 function packageManifest(configuredPackage: ConfiguredPackage): Record<string, unknown> | undefined {
   if (!configuredPackage.installedPath) return undefined;
   return readJsonFile(path.join(configuredPackage.installedPath, "package.json"));
 }
-
 function manifestExtensionCount(manifest: Record<string, unknown> | undefined): number {
   const pi = manifest?.pi;
   if (!pi || typeof pi !== "object" || Array.isArray(pi)) return 0;
@@ -125,11 +154,10 @@ function manifestExtensionCount(manifest: Record<string, unknown> | undefined): 
     ? extensions.filter((entry) => typeof entry === "string").length
     : 0;
 }
-
 function manifestNativeEntrypointCount(manifest: Record<string, unknown> | undefined): number {
-  const aether = manifest?.aether;
-  if (!aether || typeof aether !== "object" || Array.isArray(aether)) return 0;
-  const native = (aether as Record<string, unknown>).native;
+  const andex = manifest?.andex;
+  if (!andex || typeof andex !== "object" || Array.isArray(andex)) return 0;
+  const native = (andex as Record<string, unknown>).native;
   if (!native || typeof native !== "object" || Array.isArray(native)) return 0;
   const nativeManifest = native as Record<string, unknown>;
   if (nativeManifest.enabled === false) return 0;
@@ -143,7 +171,6 @@ function manifestNativeEntrypointCount(manifest: Record<string, unknown> | undef
   };
   return countConfigured(nativeManifest.entrypoints) || countConfigured(nativeManifest.entrypoint);
 }
-
 function packageResourcesForSource(source: string, resolved: ResolvedPaths): PackageResources {
   const pathsFor = (entries: ResolvedPaths["extensions"]): string[] =>
     entries
@@ -156,7 +183,6 @@ function packageResourcesForSource(source: string, resolved: ResolvedPaths): Pac
     themes: pathsFor(resolved.themes),
   };
 }
-
 function installedPackagePayload(
   configuredPackage: ConfiguredPackage,
   resources: PackageResources,
@@ -172,7 +198,7 @@ function installedPackagePayload(
     version: typeof manifest?.version === "string" ? manifest.version : "",
     description: typeof manifest?.description === "string" ? manifest.description : "",
     extensionCount: resources.extensions.length || manifestExtensionCount(manifest),
-    aetherExtensionCount: aetherAppExtensionCountForManifest(manifest),
+    andexExtensionCount: andexAppExtensionCountForManifest(manifest),
     nativeEntrypointCount: manifestNativeEntrypointCount(manifest),
     skillCount: resources.skills.length,
     promptCount: resources.prompts.length,
@@ -180,22 +206,36 @@ function installedPackagePayload(
     skillPaths: resources.skills,
   };
 }
-
 export async function listExtensionPackages(cwd: string): Promise<InstalledExtensionPackage[]> {
   const packageManager = createPackageManager(cwd);
   const configuredPackages = packageManager
     .listConfiguredPackages()
     .filter((configuredPackage) => configuredPackage.scope === "user");
   if (configuredPackages.length === 0) return [];
-  const resolved = await packageManager.resolve();
-  return configuredPackages
-    .map((configuredPackage) => installedPackagePayload(
-      configuredPackage,
-      packageResourcesForSource(configuredPackage.source, resolved),
-    ))
+  const settings = createPackageSettings(cwd, PI_AGENT_DIRECTORY).getGlobalSettings();
+  const packages: InstalledExtensionPackage[] = [];
+  for (const configuredPackage of configuredPackages) {
+    let resources: PackageResources = { extensions: [], skills: [], prompts: [], themes: [] };
+    try {
+      // Listing is read-only: a missing or interrupted package must never trigger
+      // an npm install or hide the other packages while the network is unavailable.
+      const entry = settings.packages?.find((entry) =>
+        (typeof entry === "string" ? entry : entry.source) === configuredPackage.source
+      );
+      const isolated = new DefaultPackageManager({
+        cwd,
+        agentDir: PI_AGENT_DIRECTORY,
+        settingsManager: SettingsManager.inMemory({ ...settings, packages: entry ? [entry] : [] }),
+      });
+      resources = packageResourcesForSource(configuredPackage.source, await isolated.resolve(async () => "skip"));
+    } catch (error) {
+      process.stderr.write(`Unable to inspect ${configuredPackage.source}: ${String(error)}\n`);
+    }
+    packages.push(installedPackagePayload(configuredPackage, resources));
+  }
+  return packages
     .sort((left, right) => left.name.localeCompare(right.name));
 }
-
 function requireNpmPackageSource(source: string): string {
   const normalized = source.trim();
   if (!normalized.startsWith("npm:") || normalized.length <= 4 || /\s/.test(normalized)) {
@@ -203,16 +243,21 @@ function requireNpmPackageSource(source: string): string {
   }
   return normalized;
 }
-
-export async function installExtensionPackage(cwd: string, source: string): Promise<void> {
-  await createPackageManager(cwd).installAndPersist(requireNpmPackageSource(source));
+export async function installExtensionPackage(
+  cwd: string,
+  source: string,
+  onProgress: (phase: string) => void = () => {},
+): Promise<void> {
+  const settingsManager = createPackageSettings(cwd, PI_AGENT_DIRECTORY);
+  const manager = new DefaultPackageManager({ cwd, agentDir: PI_AGENT_DIRECTORY, settingsManager });
+  onProgress("installing");
+  await manager.installAndPersist(requireNpmPackageSource(source));
+  onProgress("saving");
+  await flushPackageSettings(settingsManager);
 }
-
 export async function removeExtensionPackage(cwd: string, source: string): Promise<boolean> {
   const normalized = requireNpmPackageSource(source);
-  const settingsManager = SettingsManager.create(cwd, PI_AGENT_DIRECTORY, {
-    projectTrusted: false,
-  });
+  const settingsManager = createPackageSettings(cwd, PI_AGENT_DIRECTORY);
   const packageManager = new DefaultPackageManager({
     cwd,
     agentDir: PI_AGENT_DIRECTORY,
@@ -222,7 +267,6 @@ export async function removeExtensionPackage(cwd: string, source: string): Promi
     entry.scope === "user" && entry.source === normalized
   );
   if (!configuredPackage) return false;
-
   const installedPath = configuredPackage.installedPath;
   if (installedPath) {
     const managedRoot = path.resolve(PI_AGENT_DIRECTORY, "npm", "node_modules");
@@ -236,15 +280,19 @@ export async function removeExtensionPackage(cwd: string, source: string): Promi
     }
     fs.rmSync(resolvedPath, { recursive: true, force: true });
   }
-
   const configured = settingsManager.getGlobalSettings().packages ?? [];
   settingsManager.setPackages(configured.filter((entry) => {
     const configuredSource = typeof entry === "string" ? entry : entry.source;
     return configuredSource !== normalized;
   }));
+  await flushPackageSettings(settingsManager);
   return true;
 }
-
-export async function updateExtensionPackage(cwd: string, source: string): Promise<void> {
+export async function updateExtensionPackage(
+  cwd: string,
+  source: string,
+  onProgress: (phase: string) => void = () => {},
+): Promise<void> {
+  onProgress("installing");
   await createPackageManager(cwd).update(requireNpmPackageSource(source));
 }

@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import { copyFile, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { createInterface } from "node:readline";
 import { afterEach, test } from "node:test";
 import {
@@ -15,9 +15,7 @@ import {
   createReadToolDefinition,
   createWriteToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-
 const activeClients = new Set();
-
 class BridgeClient {
   constructor(environment = {}, bridgePath = "dist/bridge.mjs", cwd = process.cwd()) {
     this.child = spawn(process.execPath, [bridgePath], {
@@ -73,7 +71,6 @@ class BridgeClient {
     });
     activeClients.add(this);
   }
-
   failHarness(error) {
     for (const pending of this.pending.values()) {
       clearTimeout(pending.timeout);
@@ -86,7 +83,6 @@ class BridgeClient {
     }
     this.eventWaiters = [];
   }
-
   request(id, type, payload = {}, timeoutMs = 10_000) {
     this.child.stdin.write(`${JSON.stringify({ id, type, payload })}\n`);
     return new Promise((resolve, reject) => {
@@ -97,11 +93,9 @@ class BridgeClient {
       this.pending.set(id, { resolve, reject, timeout });
     });
   }
-
   send(id, type, payload = {}) {
     this.child.stdin.write(`${JSON.stringify({ id, type, payload })}\n`);
   }
-
   waitForEvent(predicate, timeoutMs = 5_000) {
     const existing = this.events.find(predicate);
     if (existing) return Promise.resolve(existing);
@@ -118,7 +112,6 @@ class BridgeClient {
       this.eventWaiters.push(waiter);
     });
   }
-
   async close() {
     activeClients.delete(this);
     for (const pending of this.pending.values()) {
@@ -126,21 +119,22 @@ class BridgeClient {
       pending.reject(new Error("Pi bridge test client closed."));
     }
     this.pending.clear();
+    if (this.child.exitCode !== null || this.child.signalCode !== null) return;
+    const closed = new Promise((resolve) => this.child.once("close", resolve));
     this.child.stdin.end();
     if (!this.child.killed) this.child.kill();
+    await closed;
   }
 }
-
 afterEach(async () => {
   await Promise.all([...activeClients].map((client) => client.close()));
 });
-
-test("lists Pi-discovered project skills without Aether managed copies", async () => {
-  const root = await mkdtemp(join(tmpdir(), "aether-skills-"));
+test("lists Pi-discovered project skills without Andex managed copies", async () => {
+  const root = await mkdtemp(join(tmpdir(), "andex-skills-"));
   const workspace = join(root, "workspace");
   const agentDir = join(root, "agent");
   const projectSkill = join(workspace, ".agents", "skills", "review");
-  const managedSkill = join(workspace, ".aether", "skills", "managed");
+  const managedSkill = join(workspace, ".andex", "skills", "managed");
   await mkdir(projectSkill, { recursive: true });
   await mkdir(managedSkill, { recursive: true });
   await mkdir(agentDir, { recursive: true });
@@ -150,7 +144,7 @@ test("lists Pi-discovered project skills without Aether managed copies", async (
   );
   await writeFile(
     join(managedSkill, "SKILL.md"),
-    "---\nname: managed\ndescription: Already managed by Aether\n---\n",
+    "---\nname: managed\ndescription: Already managed by Andex\n---\n",
   );
   const client = new BridgeClient({ HOME: root }, "dist/extension-bridge.mjs");
   try {
@@ -166,9 +160,8 @@ test("lists Pi-discovered project skills without Aether managed copies", async (
     await rm(root, { recursive: true, force: true });
   }
 });
-
 test("lists Pi extension packages from an isolated agent directory", async () => {
-  const home = await mkdtemp(join(tmpdir(), "aether-pi-packages-"));
+  const home = await mkdtemp(join(tmpdir(), "andex-pi-packages-"));
   const client = new BridgeClient(
     { HOME: home, USERPROFILE: home },
     "dist/extension-bridge.mjs",
@@ -187,16 +180,58 @@ test("lists Pi extension packages from an isolated agent directory", async () =>
     await rm(home, { recursive: true, force: true });
   }
 });
-
+test("lists healthy packages alongside interrupted installs without accessing npm", async () => {
+  for (const bridgePath of ["dist/bridge.mjs", "dist/extension-bridge.mjs"]) {
+    const home = await mkdtemp(join(tmpdir(), "andex-interrupted-packages-"));
+    const agentDirectory = join(home, ".pi", "agent");
+    const healthy = join(agentDirectory, "npm", "node_modules", "andex-healthy");
+    const broken = join(agentDirectory, "npm", "node_modules", "andex-broken");
+    await mkdir(healthy, { recursive: true });
+    await mkdir(broken, { recursive: true });
+    await writeFile(join(healthy, "package.json"), JSON.stringify({ name: "andex-healthy", version: "1.0.0", pi: { extensions: ["index.js"] } }));
+    await writeFile(join(healthy, "index.js"), "export default () => {};\n");
+    await writeFile(join(broken, "package.json"), "{interrupted");
+    await writeFile(join(agentDirectory, "settings.json"), JSON.stringify({ packages: ["npm:andex-missing", "npm:andex-broken", "npm:andex-healthy"] }));
+    // No offline flag: a read must skip missing packages even with networking enabled.
+    const client = new BridgeClient({ HOME: home, USERPROFILE: home, npm_config_registry: "http://127.0.0.1:1" }, bridgePath);
+    try {
+      const result = await client.request("recover-list", "list_extension_packages");
+      assert.equal(result.packages.length, 3);
+      const entry = result.packages.find((entry) => entry.name === "andex-healthy");
+      assert.equal(entry.version, "1.0.0");
+      assert.equal(entry.extension_count, 1);
+      assert.equal(client.stderr.includes("npm ERR"), false);
+    } finally {
+      await client.close();
+      await rm(home, { recursive: true, force: true });
+    }
+  }
+});
+test("reports corrupt package settings instead of an empty installed list", async () => {
+  for (const bridgePath of ["dist/bridge.mjs", "dist/extension-bridge.mjs"]) {
+    const home = await mkdtemp(join(tmpdir(), "andex-corrupt-packages-"));
+    const agentDirectory = join(home, ".pi", "agent");
+    await mkdir(agentDirectory, { recursive: true });
+    await writeFile(join(agentDirectory, "settings.json"), "{interrupted");
+    const client = new BridgeClient({ HOME: home, USERPROFILE: home }, bridgePath);
+    try {
+      await assert.rejects(client.request("corrupt-list", "list_extension_packages"));
+      assert.equal(await readFile(join(agentDirectory, "settings.json"), "utf8"), "{interrupted");
+    } finally {
+      await client.close();
+      await rm(home, { recursive: true, force: true });
+    }
+  }
+});
 test("keeps npm install output off both bridge protocol streams", async () => {
   for (const bridgePath of ["dist/bridge.mjs", "dist/extension-bridge.mjs"]) {
-    const home = await mkdtemp(join(tmpdir(), "aether-package-output-"));
+    const home = await mkdtemp(join(tmpdir(), "andex-package-output-"));
     const packageDirectory = join(home, "extension-package");
     await mkdir(packageDirectory, { recursive: true });
     await writeFile(
       join(packageDirectory, "package.json"),
       JSON.stringify({
-        name: "aether-protocol-output-test",
+        name: "andex-protocol-output-test",
         version: "1.0.0",
         description: "Local package used to verify protocol output isolation",
       }),
@@ -214,55 +249,65 @@ test("keeps npm install output off both bridge protocol streams", async () => {
       bridgePath,
     );
     try {
-      const source = `npm:aether-protocol-output-test@file:${packageDirectory}`;
+      const source = `npm:andex-protocol-output-test@file:${packageDirectory}`;
       const result = await client.request(
         `package-install-${bridgePath}`,
         "install_extension_package",
         { source },
         30_000,
       );
-
       assert.equal(result.installed, true);
       assert.equal(result.source, source);
       assert.equal(result.packages.length, 1);
-      assert.equal(result.packages[0].name, "aether-protocol-output-test");
+      assert.equal(result.packages[0].name, "andex-protocol-output-test");
+      const phases = client.events.filter((event) => event.event === "extension_package_progress").map((event) => event.payload.phase);
+      assert.deepEqual(phases, ["installing", "saving", "reloading", "refreshing"]);
+      const persisted = JSON.parse(await readFile(join(home, ".pi", "agent", "settings.json"), "utf8"));
+      assert.deepEqual(persisted.packages, [source]);
+      // Close immediately after the response; a fresh runtime must see the package.
+      await client.close();
+      const restarted = new BridgeClient({ HOME: home, USERPROFILE: home, PI_OFFLINE: "1" }, bridgePath);
+      try {
+        const listed = await restarted.request("after-restart", "list_extension_packages");
+        assert.equal(listed.packages[0].source, source);
+      } finally {
+        await restarted.close();
+      }
     } finally {
       await client.close();
       await rm(home, { recursive: true, force: true });
     }
   }
 });
-
 test("removes extension packages without reloading their code", async () => {
-  const home = await mkdtemp(join(tmpdir(), "aether-remove-package-"));
+  const home = await mkdtemp(join(tmpdir(), "andex-remove-package-"));
   const agentDirectory = join(home, ".pi", "agent");
   const packageDirectory = join(
     agentDirectory,
     "npm",
     "node_modules",
-    "aether-remove-test",
+    "andex-remove-test",
   );
   await mkdir(packageDirectory, { recursive: true });
   await writeFile(
     join(agentDirectory, "settings.json"),
-    JSON.stringify({ packages: ["npm:aether-remove-test"] }),
+    JSON.stringify({ packages: ["npm:andex-remove-test"] }),
     "utf8",
   );
   await writeFile(
     join(packageDirectory, "package.json"),
     JSON.stringify({
-      name: "aether-remove-test",
+      name: "andex-remove-test",
       version: "1.0.0",
-      aether: { extensions: ["./broken.ts"] },
+      andex: { extensions: ["./broken.ts"] },
     }),
     "utf8",
   );
   await writeFile(
     join(packageDirectory, "broken.ts"),
-    "export default (aether) => aether.registerSettings({ id: 'old', title: 'Old', sections: [] });\n",
+    "export default (andex) => andex.registerSettings({ id: 'old', title: 'Old', sections: [] });\n",
     "utf8",
   );
-
   const client = new BridgeClient({
     HOME: home,
     USERPROFILE: home,
@@ -270,7 +315,7 @@ test("removes extension packages without reloading their code", async () => {
   });
   try {
     const result = await client.request("package-remove", "remove_extension_package", {
-      source: "npm:aether-remove-test",
+      source: "npm:andex-remove-test",
     });
     assert.equal(result.removed, true);
     assert.equal(Object.hasOwn(result, "reload"), false);
@@ -280,28 +325,27 @@ test("removes extension packages without reloading their code", async () => {
     await rm(home, { recursive: true, force: true });
   }
 });
-
 test("reports Native Mod entrypoints for installed npm packages", async () => {
-  const home = await mkdtemp(join(tmpdir(), "aether-native-package-"));
+  const home = await mkdtemp(join(tmpdir(), "andex-native-package-"));
   const agentDirectory = join(home, ".pi", "agent");
   const packageDirectory = join(
     agentDirectory,
     "npm",
     "node_modules",
-    "aether-native-test",
+    "andex-native-test",
   );
   await mkdir(packageDirectory, { recursive: true });
   await writeFile(
     join(agentDirectory, "settings.json"),
-    JSON.stringify({ packages: ["npm:aether-native-test"] }),
+    JSON.stringify({ packages: ["npm:andex-native-test"] }),
     "utf8",
   );
   await writeFile(
     join(packageDirectory, "package.json"),
     JSON.stringify({
-      name: "aether-native-test",
+      name: "andex-native-test",
       version: "1.0.0",
-      aether: {
+      andex: {
         native: {
           classpath: ["./mod.dex"],
           entrypoints: [],
@@ -311,7 +355,6 @@ test("reports Native Mod entrypoints for installed npm packages", async () => {
     }),
     "utf8",
   );
-
   const client = new BridgeClient({
     HOME: home,
     USERPROFILE: home,
@@ -323,42 +366,39 @@ test("reports Native Mod entrypoints for installed npm packages", async () => {
       "list_extension_packages",
     );
     assert.equal(result.packages.length, 1);
-    assert.equal(result.packages[0].source, "npm:aether-native-test");
+    assert.equal(result.packages[0].source, "npm:andex-native-test");
     assert.equal(result.packages[0].native_entrypoint_count, 1);
   } finally {
     await client.close();
     await rm(home, { recursive: true, force: true });
   }
 });
-
-test("loads Aether UI extensions, renders native trees, runs actions, and intercepts events", async () => {
-  const home = await mkdtemp(join(tmpdir(), "aether-app-extensions-"));
-  const extensionDirectory = join(home, ".aether", "extensions", "demo");
+test("loads Andex UI extensions, renders native trees, runs actions, and intercepts events", async () => {
+  const home = await mkdtemp(join(tmpdir(), "andex-app-extensions-"));
+  const extensionDirectory = join(home, ".andex", "extensions", "demo");
   await mkdir(extensionDirectory, { recursive: true });
   await writeFile(
     join(extensionDirectory, "package.json"),
     JSON.stringify({
-      name: "aether-demo",
+      name: "andex-demo",
       version: "1.0.0",
-      aether: { extensions: ["./index.ts"] },
+      andex: { extensions: ["./index.ts"] },
     }),
     "utf8",
   );
   await writeFile(
     join(extensionDirectory, "index.ts"),
     `
-import { defineAetherExtension, ui } from "@aether/extension-api";
-
+import { defineAndexExtension, ui } from "@andex/extension-api";
 let removeFetchToolTitle = () => {};
-
-export default defineAetherExtension((aether) => {
-  aether.registerAction("increment", async () => {
-    const count = aether.storage.get("count", 0) + 1;
-    aether.storage.set("count", count);
-    await aether.host.invoke("app.notify", { message: "count=" + count });
+export default defineAndexExtension((andex) => {
+  andex.registerAction("increment", async () => {
+    const count = andex.storage.get("count", 0) + 1;
+    andex.storage.set("count", count);
+    await andex.host.invoke("app.notify", { message: "count=" + count });
     return { count };
   });
-  aether.registerSurface("chat.composer.top", {
+  andex.registerSurface("chat.composer.top", {
     id: "counter",
     render: ({ storage, draft_input }) =>
       ui.card([
@@ -367,7 +407,7 @@ export default defineAetherExtension((aether) => {
         ui.button("Increment", "increment"),
       ]),
   });
-  aether.registerComponent("chat.composer.actionTray", {
+  andex.registerComponent("chat.composer.actionTray", {
     id: "tray-wrapper",
     mode: "wrap",
     render: () => ui.card([
@@ -375,11 +415,11 @@ export default defineAetherExtension((aether) => {
       ui.core(),
     ]),
   });
-  aether.registerAction("settings:preferences:enabled", ({ value }) => {
-    aether.storage.set("settings:preferences:enabled", value === true);
+  andex.registerAction("settings:preferences:enabled", ({ value }) => {
+    andex.storage.set("settings:preferences:enabled", value === true);
     return { customSettingsAction: true };
   });
-  aether.registerSettings({
+  andex.registerSettings({
     id: "preferences",
     title: "Preferences",
     sections: [{
@@ -387,7 +427,7 @@ export default defineAetherExtension((aether) => {
       settings: [{ id: "enabled", label: "Enabled", type: "toggle", default: true }],
     }],
   });
-  aether.registerSettings({
+  andex.registerSettings({
     id: "secondary",
     title: "Secondary",
     order: 1,
@@ -395,18 +435,18 @@ export default defineAetherExtension((aether) => {
       settings: [{ id: "enabled", label: "Enabled", type: "toggle", default: true }],
     }],
   });
-  aether.registerComposerMenuItem({ id: "run", title: "Run demo", action: "run" });
-  aether.registerMessageType({ type: "demo", render: ({ message }) => ui.text(String(message.text ?? "")) });
-  aether.registerToolTitle("web_search", "Searching the web", "Searched the web", 200);
-  removeFetchToolTitle = aether.registerToolTitle("fetch_content", "Fetching content", "Fetched content");
-  aether.registerAction("remove-fetch-title", () => {
+  andex.registerComposerMenuItem({ id: "run", title: "Run demo", action: "run" });
+  andex.registerMessageType({ type: "demo", render: ({ message }) => ui.text(String(message.text ?? "")) });
+  andex.registerToolTitle("web_search", "Searching the web", "Searched the web", 200);
+  removeFetchToolTitle = andex.registerToolTitle("fetch_content", "Fetching content", "Fetched content");
+  andex.registerAction("remove-fetch-title", () => {
     removeFetchToolTitle();
     return { removed: true };
   });
-  aether.registerAction("list-skills", async () =>
-    aether.services.invoke("skills", "list"));
-  aether.on("before_send", ({ text }) => ({ text: "[ext] " + text }));
-  aether.intercept("chat.new", ({ selected_skill_ids }) => ({
+  andex.registerAction("list-skills", async () =>
+    andex.services.invoke("skills", "list"));
+  andex.on("before_send", ({ text }) => ({ text: "[ext] " + text }));
+  andex.intercept("chat.new", ({ selected_skill_ids }) => ({
     selected_skill_ids,
     intercepted: true,
   }));
@@ -414,13 +454,12 @@ export default defineAetherExtension((aether) => {
 `,
     "utf8",
   );
-
   const client = new BridgeClient(
     { HOME: home, USERPROFILE: home },
     "dist/extension-bridge.mjs",
   );
   try {
-    const loaded = await client.request("aether-load", "reload_aether_extensions", {
+    const loaded = await client.request("andex-load", "reload_andex_extensions", {
       context: { draft_input: "hello" },
     });
     assert.equal(loaded.snapshot.extensions.length, 1);
@@ -448,10 +487,9 @@ export default defineAetherExtension((aether) => {
       ],
     );
     assert.deepEqual(loaded.snapshot.event_names, ["before_send", "operation:chat.new"]);
-
     const settingsResult = await client.request(
-      "aether-settings-action",
-      "invoke_aether_extension_action",
+      "andex-settings-action",
+      "invoke_andex_extension_action",
       {
         extension_id: loaded.snapshot.extensions[0].id,
         action: "settings:preferences:enabled",
@@ -462,10 +500,9 @@ export default defineAetherExtension((aether) => {
     assert.equal(settingsResult.result.customSettingsAction, true);
     assert.equal(settingsResult.snapshot.settings[0].sections[0].settings[0].value, false);
     assert.equal(settingsResult.snapshot.settings[1].sections[0].settings[0].value, true);
-
     const removedTitle = await client.request(
-      "aether-remove-title-action",
-      "invoke_aether_extension_action",
+      "andex-remove-title-action",
+      "invoke_andex_extension_action",
       {
         extension_id: loaded.snapshot.extensions[0].id,
         action: "remove-fetch-title",
@@ -478,32 +515,29 @@ export default defineAetherExtension((aether) => {
       removedTitle.snapshot.tool_titles.map(({ tool_name }) => tool_name),
       ["web_search"],
     );
-
-    const disabled = await client.request("aether-disabled", "reload_aether_extensions", {
+    const disabled = await client.request("andex-disabled", "reload_andex_extensions", {
       disabled_extension_paths: [extensionDirectory],
       context: { draft_input: "hello" },
     });
     assert.deepEqual(disabled.snapshot.extensions, []);
     assert.deepEqual(disabled.snapshot.surfaces, []);
     assert.deepEqual(disabled.snapshot.tool_titles, []);
-
-    await client.request("aether-reenabled", "reload_aether_extensions", {
+    await client.request("andex-reenabled", "reload_andex_extensions", {
       disabled_extension_paths: [],
       disabled_package_sources: [],
       context: { draft_input: "hello" },
     });
-
-    const actionPromise = client.request("aether-action", "invoke_aether_extension_action", {
+    const actionPromise = client.request("andex-action", "invoke_andex_extension_action", {
       extension_id: loaded.snapshot.extensions[0].id,
       action: "increment",
       args: {},
       context: { draft_input: "hello" },
     });
     const hostCall = await client.waitForEvent(
-      (frame) => frame.id === "aether-action" && frame.event === "aether_host_call",
+      (frame) => frame.id === "andex-action" && frame.event === "andex_host_call",
     );
     assert.equal(hostCall.payload.method, "app.notify");
-    await client.request("aether-host-result", "aether_host_result", {
+    await client.request("andex-host-result", "andex_host_result", {
       call_id: hostCall.payload.call_id,
       ok: true,
       result: { notified: true },
@@ -511,28 +545,26 @@ export default defineAetherExtension((aether) => {
     const actionResult = await actionPromise;
     assert.equal(actionResult.result.count, 1);
     assert.equal(actionResult.snapshot.surfaces[0].tree.children[0].text, "Count 1");
-
-    const servicePromise = client.request("aether-service-action", "invoke_aether_extension_action", {
+    const servicePromise = client.request("andex-service-action", "invoke_andex_extension_action", {
       extension_id: loaded.snapshot.extensions[0].id,
       action: "list-skills",
       args: {},
       context: {},
     });
     const serviceCall = await client.waitForEvent(
-      (frame) => frame.id === "aether-service-action" && frame.event === "aether_host_call",
+      (frame) => frame.id === "andex-service-action" && frame.event === "andex_host_call",
     );
     assert.equal(serviceCall.payload.method, "service.invoke");
     assert.equal(serviceCall.payload.args.service, "skills");
     assert.equal(serviceCall.payload.args.method, "list");
-    await client.request("aether-service-host-result", "aether_host_result", {
+    await client.request("andex-service-host-result", "andex_host_result", {
       call_id: serviceCall.payload.call_id,
       ok: true,
       result: { skills: [] },
     });
     const serviceResult = await servicePromise;
     assert.deepEqual(serviceResult.result, { skills: [] });
-
-    const eventResult = await client.request("aether-event", "dispatch_aether_extension_event", {
+    const eventResult = await client.request("andex-event", "dispatch_andex_extension_event", {
       event: "before_send",
       data: { text: "ship it" },
       context: {},
@@ -545,54 +577,49 @@ export default defineAetherExtension((aether) => {
     await rm(home, { recursive: true, force: true });
   }
 });
-
-test("keeps the last working Aether runtime when a reload factory fails", async () => {
-  const home = await mkdtemp(join(tmpdir(), "aether-atomic-reload-"));
-  const extensionDirectory = join(home, ".aether", "extensions", "atomic");
+test("keeps the last working Andex runtime when a reload factory fails", async () => {
+  const home = await mkdtemp(join(tmpdir(), "andex-atomic-reload-"));
+  const extensionDirectory = join(home, ".andex", "extensions", "atomic");
   const extensionPath = join(extensionDirectory, "index.ts");
   await mkdir(extensionDirectory, { recursive: true });
   await writeFile(
     join(extensionDirectory, "package.json"),
     JSON.stringify({
-      name: "aether-atomic",
+      name: "andex-atomic",
       version: "1.0.0",
-      aether: { extensions: ["./index.ts"] },
+      andex: { extensions: ["./index.ts"] },
     }),
     "utf8",
   );
   await writeFile(
     extensionPath,
     `
-import { defineAetherExtension, ui } from "@baimoqilin/aether-extension-api";
-
-export default defineAetherExtension((aether) => {
-  aether.registerSurface("chat.composer.top", {
+import { defineAndexExtension, ui } from "@tangnanbai/andex-extension-api";
+export default defineAndexExtension((andex) => {
+  andex.registerSurface("chat.composer.top", {
     id: "stable",
     render: () => ui.text("stable runtime"),
   });
-  aether.registerAction("version", () => ({ version: "stable" }));
+  andex.registerAction("version", () => ({ version: "stable" }));
 });
 `,
     "utf8",
   );
-
   const client = new BridgeClient({ HOME: home, USERPROFILE: home });
   try {
     const loaded = await client.request(
       "atomic-load",
-      "reload_aether_extensions",
+      "reload_andex_extensions",
     );
     const extensionId = loaded.snapshot.extensions[0].id;
     assert.equal(loaded.reloaded, true);
     assert.equal(loaded.snapshot.surfaces[0].tree.text, "stable runtime");
-
     await writeFile(
       extensionPath,
       `
-import { defineAetherExtension, ui } from "@aether/extension-api";
-
-export default defineAetherExtension((aether) => {
-  aether.registerSurface("chat.composer.top", {
+import { defineAndexExtension, ui } from "@andex/extension-api";
+export default defineAndexExtension((andex) => {
+  andex.registerSurface("chat.composer.top", {
     id: "partial",
     render: () => ui.text("partial runtime"),
   });
@@ -601,10 +628,9 @@ export default defineAetherExtension((aether) => {
 `,
       "utf8",
     );
-
     const rejected = await client.request(
       "atomic-reload-failed",
-      "reload_aether_extensions",
+      "reload_andex_extensions",
     );
     assert.equal(rejected.reloaded, false);
     assert.match(rejected.errors[0].error, /candidate failed after registration/);
@@ -614,10 +640,9 @@ export default defineAetherExtension((aether) => {
       [`${extensionId}:stable`],
     );
     assert.equal(rejected.snapshot.surfaces[0].tree.text, "stable runtime");
-
     const action = await client.request(
       "atomic-old-action",
-      "invoke_aether_extension_action",
+      "invoke_andex_extension_action",
       {
         extension_id: extensionId,
         action: "version",
@@ -630,10 +655,11 @@ export default defineAetherExtension((aether) => {
     await rm(home, { recursive: true, force: true });
   }
 });
-
-test("installs dependencies for bundled Aether packages before loading them", async () => {
-  const home = await mkdtemp(join(tmpdir(), "aether-preinstalled-deps-"));
-  const packageDirectory = join(home, ".aether", "extensions", "dependency-test");
+test("installs dependencies for bundled Andex packages before loading them", {
+  skip: process.platform === "win32" ? "Fixture executes a POSIX npm script." : false,
+}, async () => {
+  const home = await mkdtemp(join(tmpdir(), "andex-preinstalled-deps-"));
+  const packageDirectory = join(home, ".andex", "extensions", "dependency-test");
   const binDirectory = join(home, "bin");
   const npmLog = join(home, "npm.log");
   await mkdir(packageDirectory, { recursive: true });
@@ -644,13 +670,13 @@ test("installs dependencies for bundled Aether packages before loading them", as
       name: "dependency-test",
       version: "1.0.0",
       dependencies: { "fixture-dependency": "1.0.0" },
-      aether: { extensions: ["./index.ts"] },
+      andex: { extensions: ["./index.ts"] },
     }),
     "utf8",
   );
   await writeFile(
     join(packageDirectory, "index.ts"),
-    `export default (aether) => aether.registerAction("loaded", () => ({ loaded: true }));\n`,
+    `export default (andex) => andex.registerAction("loaded", () => ({ loaded: true }));\n`,
     "utf8",
   );
   // Simulate an interrupted install. A bare node_modules directory must not be
@@ -658,122 +684,112 @@ test("installs dependencies for bundled Aether packages before loading them", as
   await mkdir(join(packageDirectory, "node_modules"), { recursive: true });
   await writeFile(
     join(binDirectory, "npm"),
-    `#!/bin/sh\nprintf '%s\\n' "$*" >> "$AETHER_TEST_NPM_LOG"\nmkdir -p node_modules\n`,
+    `#!/bin/sh\nprintf '%s\\n' "$*" >> "$ANDEX_TEST_NPM_LOG"\nmkdir -p node_modules\n`,
     { encoding: "utf8", mode: 0o755 },
   );
-
   const client = new BridgeClient({
     HOME: home,
     USERPROFILE: home,
     PATH: `${binDirectory}:${process.env.PATH ?? ""}`,
-    AETHER_TEST_NPM_LOG: npmLog,
+    ANDEX_TEST_NPM_LOG: npmLog,
   });
   try {
-    const first = await client.request("dependency-load", "reload_aether_extensions");
+    const first = await client.request("dependency-load", "reload_andex_extensions");
     assert.equal(first.reloaded, true);
     assert.equal(first.snapshot.extensions.length, 1);
     assert.match(await readFile(npmLog, "utf8"), /^install /m);
-    assert.ok(await readFile(join(packageDirectory, "node_modules", ".aether-install-complete"), "utf8"));
-
-    await client.request("dependency-reload", "reload_aether_extensions");
+    assert.ok(await readFile(join(packageDirectory, "node_modules", ".andex-install-complete"), "utf8"));
+    await client.request("dependency-reload", "reload_andex_extensions");
     assert.equal((await readFile(npmLog, "utf8")).trim().split("\n").length, 1);
-
     const manifestPath = join(packageDirectory, "package.json");
     const updatedManifest = JSON.parse(await readFile(manifestPath, "utf8"));
     updatedManifest.dependencies["second-fixture-dependency"] = "2.0.0";
     await writeFile(manifestPath, JSON.stringify(updatedManifest), "utf8");
-    await client.request("dependency-update", "reload_aether_extensions");
+    await client.request("dependency-update", "reload_andex_extensions");
     assert.equal((await readFile(npmLog, "utf8")).trim().split("\n").length, 2);
   } finally {
     await client.close();
     await rm(home, { recursive: true, force: true });
   }
 });
-
-test("does not let one broken Aether extension block unrelated reload operations", async () => {
-  const home = await mkdtemp(join(tmpdir(), "aether-broken-extension-"));
-  const root = join(home, ".aether", "extensions");
+test("does not let one broken Andex extension block unrelated reload operations", async () => {
+  const home = await mkdtemp(join(tmpdir(), "andex-broken-extension-"));
+  const root = join(home, ".andex", "extensions");
   const broken = join(root, "broken");
   const healthy = join(root, "healthy");
   await mkdir(broken, { recursive: true });
   await writeFile(
     join(broken, "package.json"),
-    JSON.stringify({ name: "broken", aether: { extensions: ["./index.ts"] } }),
+    JSON.stringify({ name: "broken", andex: { extensions: ["./index.ts"] } }),
     "utf8",
   );
   await writeFile(join(broken, "index.ts"), `export default () => { throw new Error("broken extension"); };\n`, "utf8");
-
   const client = new BridgeClient({ HOME: home, USERPROFILE: home });
   try {
     const blocked = await client.request("broken-only", "reload_all_extensions");
     assert.equal(blocked.succeeded, true);
-    assert.equal(blocked.aether_reload.reloaded, false);
-    assert.match(blocked.aether_reload.errors[0].error, /broken extension/);
-
+    assert.equal(blocked.andex_reload.reloaded, false);
+    assert.match(blocked.andex_reload.errors[0].error, /broken extension/);
     await mkdir(healthy, { recursive: true });
     await writeFile(
       join(healthy, "package.json"),
-      JSON.stringify({ name: "healthy", aether: { extensions: ["./index.ts"] } }),
+      JSON.stringify({ name: "healthy", andex: { extensions: ["./index.ts"] } }),
       "utf8",
     );
     await writeFile(
       join(healthy, "index.ts"),
-      `import { ui } from "@aether/extension-api"; export default (aether) => aether.registerSurface("chat.composer.top", ui.text("healthy"));\n`,
+      `import { ui } from "@andex/extension-api"; export default (andex) => andex.registerSurface("chat.composer.top", ui.text("healthy"));\n`,
       "utf8",
     );
-
     const recovered = await client.request("broken-with-healthy", "reload_all_extensions");
     assert.equal(recovered.succeeded, true);
-    assert.equal(recovered.aether_reload.reloaded, true);
-    assert.deepEqual(recovered.aether.extensions.map(({ name }) => name), ["healthy"]);
-    assert.match(recovered.aether_reload.errors[0].error, /broken extension/);
+    assert.equal(recovered.andex_reload.reloaded, true);
+    assert.deepEqual(recovered.andex.extensions.map(({ name }) => name), ["healthy"]);
+    assert.match(recovered.andex_reload.errors[0].error, /broken extension/);
   } finally {
     await client.close();
     await rm(home, { recursive: true, force: true });
   }
 });
-
-test("enforces Aether Script API compatibility ranges", async () => {
-  const home = await mkdtemp(join(tmpdir(), "aether-api-range-"));
-  const extensionDirectory = join(home, ".aether", "extensions", "api-range");
+test("enforces Andex Script API compatibility ranges", async () => {
+  const home = await mkdtemp(join(tmpdir(), "andex-api-range-"));
+  const extensionDirectory = join(home, ".andex", "extensions", "api-range");
   const manifestPath = join(extensionDirectory, "package.json");
   await mkdir(extensionDirectory, { recursive: true });
   await writeFile(
     join(extensionDirectory, "index.ts"),
     `
-import { defineAetherExtension } from "@aether/extension-api";
-export default defineAetherExtension(() => {});
+import { defineAndexExtension } from "@andex/extension-api";
+export default defineAndexExtension(() => {});
 `,
     "utf8",
   );
   await writeFile(
     manifestPath,
     JSON.stringify({
-      name: "aether-api-range",
+      name: "andex-api-range",
       version: "1.0.0",
-      aether: {
+      andex: {
         api: { min: 3 },
         extensions: ["./index.ts"],
       },
     }),
     "utf8",
   );
-
   const client = new BridgeClient({ HOME: home, USERPROFILE: home });
   try {
     const incompatible = await client.request(
       "api-range-incompatible",
-      "reload_aether_extensions",
+      "reload_andex_extensions",
     );
     assert.equal(incompatible.reloaded, false);
     assert.match(incompatible.errors[0].error, /API 3 or newer/);
-
     await writeFile(
       manifestPath,
       JSON.stringify({
-        name: "aether-api-range",
+        name: "andex-api-range",
         version: "1.0.0",
-        aether: {
+        andex: {
           api: { max: 1, allowNewer: true },
           extensions: ["./index.ts"],
         },
@@ -782,7 +798,7 @@ export default defineAetherExtension(() => {});
     );
     const allowed = await client.request(
       "api-range-allow-newer",
-      "reload_aether_extensions",
+      "reload_andex_extensions",
     );
     assert.equal(allowed.reloaded, true);
     assert.equal(allowed.snapshot.extensions.length, 1);
@@ -791,29 +807,27 @@ export default defineAetherExtension(() => {});
     await rm(home, { recursive: true, force: true });
   }
 });
-
-test("reload_all_extensions honors Aether extension load filters", async () => {
-  const home = await mkdtemp(join(tmpdir(), "aether-reload-all-filters-"));
-  const extensionDirectory = join(home, ".aether", "extensions", "filtered");
+test("reload_all_extensions honors Andex extension load filters", async () => {
+  const home = await mkdtemp(join(tmpdir(), "andex-reload-all-filters-"));
+  const extensionDirectory = join(home, ".andex", "extensions", "filtered");
   await mkdir(extensionDirectory, { recursive: true });
   await writeFile(
     join(extensionDirectory, "package.json"),
     JSON.stringify({
-      name: "aether-filtered",
+      name: "andex-filtered",
       version: "1.0.0",
-      aether: { extensions: ["./index.ts"] },
+      andex: { extensions: ["./index.ts"] },
     }),
     "utf8",
   );
   await writeFile(
     join(extensionDirectory, "index.ts"),
     `
-import { defineAetherExtension } from "@aether/extension-api";
-export default defineAetherExtension(() => {});
+import { defineAndexExtension } from "@andex/extension-api";
+export default defineAndexExtension(() => {});
 `,
     "utf8",
   );
-
   const client = new BridgeClient({ HOME: home, USERPROFILE: home });
   try {
     const disabled = await client.request(
@@ -822,8 +836,7 @@ export default defineAetherExtension(() => {});
       { disabled_extension_paths: [extensionDirectory] },
     );
     assert.equal(disabled.succeeded, true);
-    assert.deepEqual(disabled.aether.extensions, []);
-
+    assert.deepEqual(disabled.andex.extensions, []);
     const enabled = await client.request(
       "reload-all-enabled",
       "reload_all_extensions",
@@ -833,35 +846,33 @@ export default defineAetherExtension(() => {});
       },
     );
     assert.equal(enabled.succeeded, true);
-    assert.equal(enabled.aether.extensions.length, 1);
+    assert.equal(enabled.andex.extensions.length, 1);
   } finally {
     await client.close();
     await rm(home, { recursive: true, force: true });
   }
 });
-
-test("routes delayed Aether host calls through the persistent subscriber", async () => {
-  const home = await mkdtemp(join(tmpdir(), "aether-background-host-"));
-  const extensionDirectory = join(home, ".aether", "extensions", "background");
+test("routes delayed Andex host calls through the persistent subscriber", async () => {
+  const home = await mkdtemp(join(tmpdir(), "andex-background-host-"));
+  const extensionDirectory = join(home, ".andex", "extensions", "background");
   await mkdir(extensionDirectory, { recursive: true });
   await writeFile(
     join(extensionDirectory, "package.json"),
     JSON.stringify({
-      name: "aether-background",
+      name: "andex-background",
       version: "1.0.0",
-      aether: { extensions: ["./index.ts"] },
+      andex: { extensions: ["./index.ts"] },
     }),
     "utf8",
   );
   await writeFile(
     join(extensionDirectory, "index.ts"),
     `
-import { defineAetherExtension } from "@aether/extension-api";
-
-export default defineAetherExtension((aether) => {
-  aether.registerAction("schedule", () => {
+import { defineAndexExtension } from "@andex/extension-api";
+export default defineAndexExtension((andex) => {
+  andex.registerAction("schedule", () => {
     setTimeout(() => {
-      void aether.host.invoke("app.notify", { message: "background" });
+      void andex.host.invoke("app.notify", { message: "background" });
     }, 250);
     return { scheduled: true };
   });
@@ -869,24 +880,22 @@ export default defineAetherExtension((aether) => {
 `,
     "utf8",
   );
-
   const client = new BridgeClient({ HOME: home, USERPROFILE: home });
   try {
     const loaded = await client.request(
       "background-load",
-      "reload_aether_extensions",
+      "reload_andex_extensions",
     );
-    client.send("background-subscriber", "subscribe_aether_extensions");
+    client.send("background-subscriber", "subscribe_andex_extensions");
     await client.waitForEvent(
       (frame) =>
         frame.id === "background-subscriber" &&
-        frame.event === "aether_invalidated" &&
+        frame.event === "andex_invalidated" &&
         frame.payload.subscribed === true,
     );
-
     const action = await client.request(
       "background-action",
-      "invoke_aether_extension_action",
+      "invoke_andex_extension_action",
       {
         extension_id: loaded.snapshot.extensions[0].id,
         action: "schedule",
@@ -894,15 +903,14 @@ export default defineAetherExtension((aether) => {
       },
     );
     assert.deepEqual(action.result, { scheduled: true });
-
     const hostCall = await client.waitForEvent(
       (frame) =>
         frame.id === "background-subscriber" &&
-        frame.event === "aether_host_call" &&
+        frame.event === "andex_host_call" &&
         frame.payload.method === "app.notify",
     );
     assert.notEqual(hostCall.id, "background-action");
-    await client.request("background-host-result", "aether_host_result", {
+    await client.request("background-host-result", "andex_host_result", {
       call_id: hostCall.payload.call_id,
       ok: true,
       result: { notified: true },
@@ -912,7 +920,6 @@ export default defineAetherExtension((aether) => {
     await rm(home, { recursive: true, force: true });
   }
 });
-
 function fauxConfig(overrides = {}) {
   return {
     provider_type: "faux",
@@ -926,7 +933,6 @@ function fauxConfig(overrides = {}) {
     ...overrides,
   };
 }
-
 function turnPayload(sessionId, messages, config = fauxConfig(), hostTools = []) {
   return {
     session_id: sessionId,
@@ -938,12 +944,10 @@ function turnPayload(sessionId, messages, config = fauxConfig(), hostTools = [])
     reasoning: "off",
   };
 }
-
 function userMessage(text) {
   return { role: "user", content: [{ type: "text", text }] };
 }
-
-function writeSuccessfulChatCompletion(response, content, model) {
+function writeSuccessfulChatCompletion(response, content, model, inputTokens = 4) {
   response.writeHead(200, { "content-type": "text/event-stream" });
   response.write(`data: ${JSON.stringify({
     id: `chatcmpl-${model}`,
@@ -962,11 +966,87 @@ function writeSuccessfulChatCompletion(response, content, model) {
     created: 1,
     model,
     choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
-    usage: { prompt_tokens: 4, completion_tokens: 2, total_tokens: 6 },
+    usage: { prompt_tokens: inputTokens, completion_tokens: 2, total_tokens: inputTokens + 2 },
   })}\n\n`);
   response.end("data: [DONE]\n\n");
 }
-
+test("long memory freezes session snapshots, persists and respects disabling", async (t) => {
+  const home = await mkdtemp(join(tmpdir(), "andex-long-memory-"));
+  const memoryDir = join(home, ".andex", "memory");
+  await mkdir(memoryDir, { recursive: true });
+  await writeFile(join(memoryDir, "USER.md"), "User prefers concise Chinese replies.");
+  const requests = [];
+  const server = createServer((request, response) => {
+    const chunks = [];
+    request.on("data", chunk => chunks.push(chunk));
+    request.on("end", () => {
+      requests.push(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+      writeSuccessfulChatCompletion(response, "done", "memory-model");
+    });
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  const client = new BridgeClient({ HOME: home, USERPROFILE: home });
+  t.after(async () => { await client.close(); await new Promise(resolve => server.close(resolve)); await rm(home, { recursive: true, force: true }); });
+  const config = {
+    provider_type: "openai_compatible", provider_config_id: "memory-test", pi_provider_id: "andex-memory-test",
+    pi_api: "openai-completions", model_id: "memory-model", base_url: `http://127.0.0.1:${server.address().port}/v1`,
+    api_key: "test-key", reasoning: false, max_retries: 0,
+  };
+  const run = id => client.request(`${id}-${requests.length}`, "run_turn", {
+    ...turnPayload(id, [userMessage("hello")], config), workspace_directory: home,
+  });
+  await run("first");
+  assert.ok(JSON.stringify(requests.at(-1).messages).includes("concise Chinese"));
+  assert.ok(requests.at(-1).tools.some(tool => tool.function.name === "memory"));
+  await writeFile(join(memoryDir, "USER.md"), "User prefers detailed English replies.");
+  await run("first");
+  assert.ok(JSON.stringify(requests.at(-1).messages).includes("concise Chinese"));
+  await run("second");
+  assert.ok(JSON.stringify(requests.at(-1).messages).includes("detailed English"));
+  await writeFile(join(memoryDir, "config.json"), JSON.stringify({ enabled: false }));
+  await run("third");
+  assert.equal(JSON.stringify(requests.at(-1).messages).includes("detailed English"), false);
+});
+test("native agent automatically compacts at 80 percent and flushes durable memory first", async (t) => {
+  const home = await mkdtemp(join(tmpdir(), "andex-auto-compact-"));
+  const requests = [];
+  let turns = 0;
+  const server = createServer((request, response) => {
+    const chunks = [];
+    request.on("data", chunk => chunks.push(chunk));
+    request.on("end", () => {
+      const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      requests.push(body);
+      const prompt = JSON.stringify(body.messages);
+      if (prompt.includes("Extract only durable user facts")) {
+        writeSuccessfulChatCompletion(response, JSON.stringify({ user: ["User prefers Chinese."], memory: [] }), "policy-model");
+      } else if (prompt.toLowerCase().includes("summar") && !prompt.includes("Long-term memory is enabled")) {
+        writeSuccessfulChatCompletion(response, "The user is testing persistent memory.", "policy-model");
+      } else {
+        turns++;
+        writeSuccessfulChatCompletion(response, "done", "policy-model", turns === 1 ? 6397 : 6398);
+      }
+    });
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  const client = new BridgeClient({ HOME: home, USERPROFILE: home });
+  t.after(async () => { await client.close(); await new Promise(resolve => server.close(resolve)); await rm(home, { recursive: true, force: true }); });
+  const config = {
+    provider_type: "openai_compatible", provider_config_id: "policy-test", pi_provider_id: "andex-policy-test",
+    pi_api: "openai-completions", model_id: "policy-model", context_window: 8000, max_tokens: 100,
+    base_url: `http://127.0.0.1:${server.address().port}/v1`, api_key: "test-key", reasoning: false, max_retries: 0,
+  };
+  const payload = { ...turnPayload("threshold", [userMessage("Past task detail. ".repeat(650))], config), workspace_directory: home };
+  await client.request("below", "run_turn", payload, 20_000);
+  assert.equal(client.events.some(event => event.event === "compaction_start"), false);
+  await client.request("at-boundary", "run_turn", { ...payload, messages: [userMessage("remember Chinese preference. ".repeat(400))] }, 20_000);
+  assert.ok(client.events.some(event => event.event === "compaction_start"), JSON.stringify({
+    events: client.events.map(event => [event.event, event.payload]), requestCount: requests.length,
+  }));
+  assert.ok(client.events.some(event => event.event === "compaction_end" && !event.payload?.error_message));
+  assert.ok(requests.some(body => JSON.stringify(body.messages).includes("Extract only durable user facts")));
+  assert.match(await readFile(join(home, ".andex", "memory", "USER.md"), "utf8"), /Chinese/);
+});
 function hostTool(name, executionMode = "parallel") {
   return {
     name,
@@ -983,7 +1063,6 @@ function hostTool(name, executionMode = "parallel") {
     execution_mode: executionMode,
   };
 }
-
 async function respondToHostTool(client, frame, id) {
   return client.request(id, "host_tool_result", {
     session_id: frame.payload.session_id,
@@ -997,10 +1076,8 @@ async function respondToHostTool(client, frame, id) {
     content: [{ type: "text", text: JSON.stringify({ ok: true }) }],
   });
 }
-
 const RESPONSES_TEST_TURN_COUNT = 3;
 const RESPONSES_TEST_PROMPT = "x".repeat(60_000);
-
 function openAIResponseEvents(responseNumber) {
   const text = `answer-${responseNumber}`;
   const messageId = `msg_${responseNumber}`;
@@ -1042,7 +1119,6 @@ function openAIResponseEvents(responseNumber) {
     },
   ];
 }
-
 async function createOpenAIResponsesServer() {
   const requests = [];
   let responseCount = 0;
@@ -1069,11 +1145,10 @@ async function createOpenAIResponsesServer() {
     close: () => new Promise((resolve) => server.close(resolve)),
   };
 }
-
 function openAIFetchRedirectEnvironment(targetBaseUrl) {
   const preloadSource = `
-const targetOrigin = process.env.AETHER_TEST_OPENAI_REDIRECT_ORIGIN;
-if (!targetOrigin) throw new Error("AETHER_TEST_OPENAI_REDIRECT_ORIGIN is required.");
+const targetOrigin = process.env.ANDEX_TEST_OPENAI_REDIRECT_ORIGIN;
+if (!targetOrigin) throw new Error("ANDEX_TEST_OPENAI_REDIRECT_ORIGIN is required.");
 const originalFetch = globalThis.fetch;
 globalThis.fetch = (input, init) => {
   const rawUrl = typeof input === "string" || input instanceof URL ? String(input) : input.url;
@@ -1084,11 +1159,10 @@ globalThis.fetch = (input, init) => {
 `;
   const preloadSpecifier = `data:text/javascript,${encodeURIComponent(preloadSource)}`;
   return {
-    AETHER_TEST_OPENAI_REDIRECT_ORIGIN: new URL(targetBaseUrl).origin,
+    ANDEX_TEST_OPENAI_REDIRECT_ORIGIN: new URL(targetBaseUrl).origin,
     NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ""} --import=${preloadSpecifier}`.trim(),
   };
 }
-
 function openAIResponsesModelConfig(baseUrl, overrides = {}) {
   return {
     provider_type: "builtin",
@@ -1105,7 +1179,25 @@ function openAIResponsesModelConfig(baseUrl, overrides = {}) {
     ...overrides,
   };
 }
-
+test("custom Responses format sends Responses input rather than Chat messages", async (t) => {
+  const server = await createOpenAIResponsesServer();
+  t.after(server.close);
+  const client = new BridgeClient();
+  const result = await client.request("custom-responses", "complete_once", {
+    model_config: openAIResponsesModelConfig(server.baseUrl, {
+      provider_type: "custom", pi_provider_id: "andex-deepseek-test",
+      pi_api: "openai-responses", model_id: "deepseek-test", reasoning: false,
+    }),
+    system_prompt: "Reply briefly.",
+    messages: [userMessage("hello")],
+  });
+  assert.equal(result.assistant_text, "answer-1", JSON.stringify(result));
+  assert.equal(server.requests[0].url, "/v1/responses");
+  assert.ok(Array.isArray(server.requests[0].body.input));
+  assert.equal(server.requests[0].body.messages, undefined);
+  assert.equal(server.requests[0].body.model, "deepseek-test");
+  assert.equal(result.usage.input_tokens, 5);
+});
 async function runResponsesTurns(client, sessionId, modelConfig, sessionDirectory) {
   for (let turn = 1; turn <= RESPONSES_TEST_TURN_COUNT; turn += 1) {
     await client.request(
@@ -1125,20 +1217,19 @@ async function runResponsesTurns(client, sessionId, modelConfig, sessionDirector
     );
   }
 }
-
 test("reports pinned bridge and Pi versions", async () => {
-  const client = new BridgeClient();
-  const ping = await client.request("ping-1", "ping");
-
-  assert.equal(ping.bridge_version, "2.0.0-alpha.0");
-  assert.equal(ping.pi_ai_version, "0.99.2");
-  assert.equal(ping.pi_agent_core_version, "0.99.2");
-  assert.equal(ping.pi_coding_agent_version, "0.99.2");
-  assert.match(ping.node_version, /^v\d+\./);
+  for (const bridgePath of ["dist/bridge.mjs", "dist/extension-bridge.mjs"]) {
+    const client = new BridgeClient({}, bridgePath);
+    const ping = await client.request("ping-1", "ping");
+    assert.equal(ping.bridge_version, "2.0.0-alpha.0");
+    assert.equal(ping.pi_ai_version, "1.3.0");
+    assert.equal(ping.pi_agent_core_version, "1.3.0");
+    assert.equal(ping.pi_coding_agent_version, "1.3.0");
+    assert.match(ping.node_version, /^v\d+\./);
+  }
 });
-
 test("loads source-compatible Pi TypeScript extensions and runs their tools", async (t) => {
-  const workspace = await mkdtemp(join(tmpdir(), "aether-pi-extension-"));
+  const workspace = await mkdtemp(join(tmpdir(), "andex-pi-extension-"));
   t.after(() => rm(workspace, { recursive: true, force: true }));
   const extensionDirectory = join(workspace, ".pi", "extensions");
   await mkdir(extensionDirectory, { recursive: true });
@@ -1147,7 +1238,6 @@ test("loads source-compatible Pi TypeScript extensions and runs their tools", as
     `
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "typebox";
-
 export default function (pi: ExtensionAPI) {
   let started = false;
   pi.on("session_start", () => { started = true; });
@@ -1167,7 +1257,6 @@ export default function (pi: ExtensionAPI) {
 `,
     "utf8",
   );
-
   const client = new BridgeClient();
   const run = client.request(
     "extension-turn",
@@ -1200,7 +1289,6 @@ export default function (pi: ExtensionAPI) {
   assert.equal(completion.usage.request_count, 2);
   assert.ok(completion.usage.total_tokens > 0);
   assert.ok(completion.usage.output_duration_ms >= 0);
-
   const listed = await client.request("extension-list", "list_extensions", {
     session_id: "session-extension",
   });
@@ -1208,9 +1296,8 @@ export default function (pi: ExtensionAPI) {
   assert.ok(listed.extension_paths.some((extensionPath) => extensionPath.endsWith("echo.ts")));
   assert.ok(listed.tools.some((tool) => tool.name === "extension_echo"));
 });
-
 test("loads TypeBox extensions from the standalone bridge bundle", async (t) => {
-  const root = await mkdtemp(join(tmpdir(), "aether-standalone-bridge-"));
+  const root = await mkdtemp(join(tmpdir(), "andex-standalone-bridge-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   const bridgePath = join(root, "bridge.mjs");
   const workspace = join(root, "workspace");
@@ -1231,7 +1318,6 @@ export default (pi) => pi.registerTool({
 `,
     "utf8",
   );
-
   const client = new BridgeClient({}, bridgePath, root);
   try {
     await client.request("standalone-turn", "run_turn", {
@@ -1247,14 +1333,12 @@ export default (pi) => pi.registerTool({
     await client.close();
   }
 });
-
 test("reloads Pi extensions atomically for an existing harness session", async (t) => {
-  const workspace = await mkdtemp(join(tmpdir(), "aether-pi-reload-"));
+  const workspace = await mkdtemp(join(tmpdir(), "andex-pi-reload-"));
   t.after(() => rm(workspace, { recursive: true, force: true }));
   const extensionDirectory = join(workspace, ".pi", "extensions");
   const extensionPath = join(extensionDirectory, "reloadable.ts");
   await mkdir(extensionDirectory, { recursive: true });
-
   const source = (version) => `
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
@@ -1275,7 +1359,6 @@ export default function (pi: ExtensionAPI) {
 }
 `;
   await writeFile(extensionPath, source("v1"), "utf8");
-
   const client = new BridgeClient();
   await client.request(
     "reload-create",
@@ -1305,9 +1388,8 @@ export default function (pi: ExtensionAPI) {
   });
   assert.equal(invoked.invoked, true);
 });
-
 test("recreates existing sessions after disabling a Pi extension", async (t) => {
-  const workspace = await mkdtemp(join(tmpdir(), "aether-pi-disable-"));
+  const workspace = await mkdtemp(join(tmpdir(), "andex-pi-disable-"));
   t.after(() => rm(workspace, { recursive: true, force: true }));
   const extensionDirectory = join(workspace, ".pi", "extensions");
   await mkdir(extensionDirectory, { recursive: true });
@@ -1320,7 +1402,6 @@ export default function (pi) {
 `,
     "utf8",
   );
-
   const client = new BridgeClient();
   await client.request(
     "disable-create",
@@ -1334,13 +1415,11 @@ export default function (pi) {
     session_id: "session-disable",
   });
   assert.ok(before.commands.some((command) => command.name === "disable-me"));
-
   const reload = await client.request("disable-reload", "reload_all_extensions", {
     disabled_extension_paths: [extensionDirectory],
     disabled_package_sources: [],
   });
   assert.equal(reload.sessions[0].recreated_on_next_use, true);
-
   await client.request(
     "disable-recreate",
     "run_turn",
@@ -1356,13 +1435,11 @@ export default function (pi) {
   });
   assert.ok(after.commands.every((command) => command.name !== "disable-me"));
 });
-
 test("recreates a reused session when a new Pi extension becomes discoverable", async (t) => {
-  const workspace = await mkdtemp(join(tmpdir(), "aether-pi-extension-discovery-"));
+  const workspace = await mkdtemp(join(tmpdir(), "andex-pi-extension-discovery-"));
   t.after(() => rm(workspace, { recursive: true, force: true }));
   const extensionDirectory = join(workspace, ".pi", "extensions");
   await mkdir(extensionDirectory, { recursive: true });
-
   const client = new BridgeClient();
   try {
     await client.request("discovery-before", "run_turn", {
@@ -1396,7 +1473,25 @@ export default (pi) => pi.registerTool({
     await client.close();
   }
 });
-
+test("refreshes existing session instructions when Android control guidance changes", async () => {
+  const client = new BridgeClient();
+  try {
+    const payload = turnPayload("session-prompt-refresh", [userMessage("hello")]);
+    await client.request("prompt-before", "run_turn", {
+      ...payload, system_prompt: "Old device control instructions.",
+    });
+    const changed = await client.request("prompt-after", "run_turn", {
+      ...payload, system_prompt: "Use phone_control for authorized accessibility and ADB.",
+    });
+    assert.equal(changed.session_reused, false);
+    const unchanged = await client.request("prompt-same", "run_turn", {
+      ...payload, system_prompt: "Use phone_control for authorized accessibility and ADB.",
+    });
+    assert.equal(unchanged.session_reused, true);
+  } finally {
+    await client.close();
+  }
+});
 test("runs text turns and reuses the persisted Pi assistant session", async () => {
   const client = new BridgeClient();
   const config = fauxConfig({ faux_response: "first answer" });
@@ -1407,7 +1502,6 @@ test("runs text turns and reuses the persisted Pi assistant session", async () =
   );
   assert.equal(first.assistant_text, "first answer");
   assert.equal(first.session_reused, false);
-
   const second = await client.request(
     "turn-2",
     "run_turn",
@@ -1432,7 +1526,6 @@ test("runs text turns and reuses the persisted Pi assistant session", async () =
   assert.equal(second.session_reused, true);
   assert.equal(second.assistant_text, "first answer");
 });
-
 test("closes AgentSession instances explicitly", async () => {
   const client = new BridgeClient();
   await client.request(
@@ -1440,7 +1533,6 @@ test("closes AgentSession instances explicitly", async () => {
     "run_turn",
     turnPayload("session-close", [userMessage("hello")]),
   );
-
   const closed = await client.request("close-session", "close_session", {
     session_id: "session-close",
   });
@@ -1453,9 +1545,8 @@ test("closes AgentSession instances explicitly", async () => {
     /Unknown Pi session/,
   );
 });
-
 test("rehydrates a persisted AgentSession before navigation", async (t) => {
-  const home = await mkdtemp(join(tmpdir(), "aether-session-rehydrate-"));
+  const home = await mkdtemp(join(tmpdir(), "andex-session-rehydrate-"));
   t.after(() => rm(home, { recursive: true, force: true }));
   const client = new BridgeClient({ HOME: home, USERPROFILE: home });
   const config = fauxConfig();
@@ -1467,7 +1558,6 @@ test("rehydrates a persisted AgentSession before navigation", async (t) => {
   await client.request("rehydrate-close", "close_session", {
     session_id: "session-rehydrate",
   });
-
   const navigation = await client.request("rehydrate-navigate", "navigate_session", {
     session_id: "session-rehydrate",
     entry_id: first.session_leaf_id,
@@ -1475,13 +1565,11 @@ test("rehydrates a persisted AgentSession before navigation", async (t) => {
     workspace_directory: process.cwd(),
     workspace_trusted: true,
   });
-
   assert.equal(navigation.session_id, "session-rehydrate");
   assert.equal(navigation.session_leaf_id, first.session_leaf_id);
 });
-
 test("retry and edit navigate the API transcript and preserve abandoned branches", async (t) => {
-  const workspace = await mkdtemp(join(tmpdir(), "aether-retry-tree-"));
+  const workspace = await mkdtemp(join(tmpdir(), "andex-retry-tree-"));
   t.after(() => rm(workspace, { recursive: true, force: true }));
   const requests = [];
   const server = createServer((request, response) => {
@@ -1496,13 +1584,13 @@ test("retry and edit navigate the API transcript and preserve abandoned branches
   t.after(() => new Promise((resolve) => server.close(resolve)));
   const config = {
     provider_type: "openai_compatible", provider_config_id: "branch-test",
-    pi_provider_id: "aether-branch-test", pi_api: "openai-completions",
+    pi_provider_id: "andex-branch-test", pi_api: "openai-completions",
     model_id: "branch-model", base_url: `http://127.0.0.1:${server.address().port}/v1`,
     api_key: "test-key", reasoning: false, max_retries: 0,
   };
   const client = new BridgeClient();
   const payload = (messages) => ({
-    ...turnPayload(`retry-tree-${workspace.split("/").at(-1)}`, messages, config), workspace_directory: workspace,
+    ...turnPayload(`retry-tree-${basename(workspace)}`, messages, config), workspace_directory: workspace,
   });
   const replies = [];
   for (let turn = 1; turn <= 5; turn++) {
@@ -1534,9 +1622,8 @@ test("retry and edit navigate the API transcript and preserve abandoned branches
   await client.request("edit-first", "run_turn", payload([userMessage("edited first")]));
   assert.deepEqual(transcript(), [["user", "edited first"]]);
 });
-
 test("imports validated Pi JSONL into a relocated session file", async (t) => {
-  const home = await mkdtemp(join(tmpdir(), "aether-jsonl-import-"));
+  const home = await mkdtemp(join(tmpdir(), "andex-jsonl-import-"));
   t.after(() => rm(home, { recursive: true, force: true }));
   const client = new BridgeClient({ HOME: home, USERPROFILE: home });
   await client.request("jsonl-create", "run_turn", turnPayload("session-jsonl", [userMessage("hello")]));
@@ -1563,19 +1650,17 @@ test("imports validated Pi JSONL into a relocated session file", async (t) => {
     /header\/session id mismatch/,
   );
 });
-
 test("uses Pi Coding Agent native tool schemas and platform runtime sets", async (t) => {
-  const home = await mkdtemp(join(tmpdir(), "aether-native-tools-"));
+  const home = await mkdtemp(join(tmpdir(), "andex-native-tools-"));
   const workspace = join(home, "alpine-workspace");
   const termuxWorkspace = join(home, "termux-workspace");
   await Promise.all([mkdir(workspace), mkdir(termuxWorkspace)]);
   t.after(() => rm(home, { recursive: true, force: true }));
   const client = new BridgeClient({ HOME: home, USERPROFILE: home });
-
   const cases = [
-    ["android-alpine", "android", "alpine", ["read", "bash", "edit", "write", "grep", "find", "ls"]],
-    ["android-termux", "android", "termux", ["read", "bash", "edit", "write"]],
-    ["ios-alpine", "ios", "alpine", ["read", "bash", "edit", "write", "grep", "find", "ls"]],
+    ["android-alpine", "android", "alpine", ["read", "bash", "edit", "write", "grep", "find", "ls", "memory"]],
+    ["android-termux", "android", "termux", ["read", "bash", "edit", "write", "memory"]],
+    ["ios-alpine", "ios", "alpine", ["read", "bash", "edit", "write", "grep", "find", "ls", "memory"]],
   ];
   for (const [sessionId, platform, runtime, expectedTools] of cases) {
     await client.request(`${sessionId}-turn`, "run_turn", {
@@ -1590,7 +1675,6 @@ test("uses Pi Coding Agent native tool schemas and platform runtime sets", async
     });
     assert.deepEqual(state.active_tools, expectedTools);
   }
-
   const state = await client.request("android-alpine-schemas", "get_session_state", {
     session_id: "android-alpine",
   });
@@ -1611,17 +1695,16 @@ test("uses Pi Coding Agent native tool schemas and platform runtime sets", async
   assert.equal("working_directory" in actualByName.bash.properties, false);
   assert.equal("environment" in actualByName.bash.properties, false);
 });
-
-test("allows only Aether-owned host tools and exposes the platform browser", async (t) => {
-  const home = await mkdtemp(join(tmpdir(), "aether-host-tools-"));
+test("allows only Andex-owned host tools and exposes the platform browser", async (t) => {
+  const home = await mkdtemp(join(tmpdir(), "andex-host-tools-"));
   t.after(() => rm(home, { recursive: true, force: true }));
   const client = new BridgeClient({ HOME: home, USERPROFILE: home });
   const sharedNames = [
-    "aether_config_get",
-    "aether_config_set",
-    "aether_skill_manage",
-    "aether_extension_manage",
-    "aether_developer_manage",
+    "andex_config_get",
+    "andex_config_set",
+    "andex_skill_manage",
+    "andex_extension_manage",
+    "andex_developer_manage",
   ];
   const removedNames = [
     "analyze_image",
@@ -1630,10 +1713,10 @@ test("allows only Aether-owned host tools and exposes the platform browser", asy
     "fetch_web_url",
     "tavily_search",
     "mcp_call_tool",
-    "aether_mcp_manage",
+    "andex_mcp_manage",
   ];
-  const requested = ["browser", ...sharedNames, ...removedNames].map((name) => hostTool(name));
-
+  const androidNames = ["phone_control", "andex_archive", "andex_web_search", "andex_web_page", "andex_github"];
+  const requested = ["browser", ...androidNames, ...sharedNames, ...removedNames].map((name) => hostTool(name));
   await client.request("android-host-turn", "run_turn", {
     ...turnPayload("android-host", [userMessage("hello")], fauxConfig(), requested),
     platform: "android",
@@ -1644,9 +1727,10 @@ test("allows only Aether-owned host tools and exposes the platform browser", asy
   });
   assert.equal(android.active_tools.includes("browser"), true);
   assert.equal(android.active_tools.includes("chrome"), false);
+  assert.equal(android.active_tools.includes("phone_control"), true);
+  assert.deepEqual(androidNames.filter((name) => android.active_tools.includes(name)), androidNames);
   assert.deepEqual(sharedNames.filter((name) => android.active_tools.includes(name)), sharedNames);
   assert.deepEqual(removedNames.filter((name) => android.active_tools.includes(name)), []);
-
   await client.request("ios-host-turn", "run_turn", {
     ...turnPayload("ios-host", [userMessage("hello")], fauxConfig(), requested),
     platform: "ios",
@@ -1657,10 +1741,11 @@ test("allows only Aether-owned host tools and exposes the platform browser", asy
   });
   assert.equal(ios.active_tools.includes("browser"), true);
   assert.equal(ios.active_tools.includes("chrome"), false);
+  assert.equal(ios.active_tools.includes("phone_control"), false);
+  assert.deepEqual(androidNames.filter((name) => ios.active_tools.includes(name)), []);
   assert.deepEqual(sharedNames.filter((name) => ios.active_tools.includes(name)), sharedNames);
   assert.deepEqual(removedNames.filter((name) => ios.active_tools.includes(name)), []);
 });
-
 test("accepts steer and follow-up messages on a live persistent harness", async () => {
   const client = new BridgeClient();
   const config = fauxConfig({
@@ -1673,7 +1758,6 @@ test("accepts steer and follow-up messages on a live persistent harness", async 
     turnPayload("session-steer", [userMessage("start")], config),
     15_000,
   );
-
   let steer;
   for (let attempt = 0; attempt < 30; attempt += 1) {
     steer = await client.request(`steer-${attempt}`, "steer", {
@@ -1686,7 +1770,6 @@ test("accepts steer and follow-up messages on a live persistent harness", async 
   assert.equal(steer?.accepted, true);
   const steeredResult = await run;
   assert.equal(steeredResult.assistant_text.includes("working response"), true);
-
   const followUp = await client.request(
     "follow-up",
     "follow_up",
@@ -1705,7 +1788,6 @@ test("accepts steer and follow-up messages on a live persistent harness", async 
   );
   assert.ok(followUp.usage.total_tokens > steeredResult.usage.total_tokens);
 });
-
 test("aborts an active harness by session id", async () => {
   const client = new BridgeClient();
   const config = fauxConfig({
@@ -1718,7 +1800,6 @@ test("aborts an active harness by session id", async () => {
     turnPayload("session-abort", [userMessage("start slowly")], config),
     15_000,
   );
-
   let abortResult;
   for (let attempt = 0; attempt < 30; attempt += 1) {
     abortResult = await client.request(`abort-${attempt}`, "abort", {
@@ -1730,7 +1811,6 @@ test("aborts an active harness by session id", async () => {
   assert.equal(abortResult?.aborted, true);
   void run.catch(() => {});
 });
-
 test("reconnects a failed provider stream without restarting the harness turn", async (t) => {
   let requestCount = 0;
   const server = createServer((request, response) => {
@@ -1774,7 +1854,6 @@ test("reconnects a failed provider stream without restarting the harness turn", 
   t.after(() => new Promise((resolve) => server.close(resolve)));
   const address = server.address();
   assert.ok(address && typeof address === "object");
-
   const client = new BridgeClient();
   const result = await client.request(
     "provider-reconnect",
@@ -1785,7 +1864,7 @@ test("reconnects a failed provider stream without restarting the harness turn", 
       {
         provider_type: "openai_compatible",
         provider_config_id: "provider-reconnect",
-        pi_provider_id: "aether-retry-test",
+        pi_provider_id: "andex-retry-test",
         pi_api: "openai-completions",
         model_id: "retry-model",
         base_url: `http://127.0.0.1:${address.port}/v1`,
@@ -1796,7 +1875,6 @@ test("reconnects a failed provider stream without restarting the harness turn", 
       },
     ),
   );
-
   assert.equal(requestCount, 2);
   assert.equal(result.assistant_text, "RECOVERED", JSON.stringify(result));
   assert.deepEqual(
@@ -1812,14 +1890,12 @@ test("reconnects a failed provider stream without restarting the harness turn", 
     ["assistant_text_delta", "assistant_stream_reset", "assistant_retry", "assistant_text_delta"],
   );
 });
-
 test("reports Pi AgentSession retry errors", async () => {
   const unavailable = createServer();
   await new Promise((resolve) => unavailable.listen(0, "127.0.0.1", resolve));
   const address = unavailable.address();
   assert.ok(address && typeof address === "object");
   await new Promise((resolve) => unavailable.close(resolve));
-
   const client = new BridgeClient();
   const run = client.request(
     "provider-network-detail",
@@ -1830,7 +1906,7 @@ test("reports Pi AgentSession retry errors", async () => {
       {
         provider_type: "openai_compatible",
         provider_config_id: "provider-network-detail",
-        pi_provider_id: "aether-network-detail-test",
+        pi_provider_id: "andex-network-detail-test",
         pi_api: "openai-completions",
         model_id: "network-detail-model",
         base_url: `http://127.0.0.1:${address.port}/v1`,
@@ -1845,11 +1921,9 @@ test("reports Pi AgentSession retry errors", async () => {
     (frame) => frame.id === "provider-network-detail" && frame.event === "assistant_retry",
   );
   await run;
-
   assert.equal(typeof retry.payload.error_message, "string");
   assert.notEqual(retry.payload.error_message.trim(), "");
 });
-
 test("maps a custom OpenAI-compatible provider through Pi", async (t) => {
   let receivedRequest;
   const server = createServer((request, response) => {
@@ -1859,7 +1933,7 @@ test("maps a custom OpenAI-compatible provider through Pi", async (t) => {
       receivedRequest = {
         url: request.url,
         authorization: request.headers.authorization,
-        customHeader: request.headers["x-aether-test"],
+        customHeader: request.headers["x-andex-test"],
         body: JSON.parse(Buffer.concat(chunks).toString("utf8")),
       };
       response.writeHead(200, { "content-type": "text/event-stream" });
@@ -1899,7 +1973,6 @@ test("maps a custom OpenAI-compatible provider through Pi", async (t) => {
   t.after(() => new Promise((resolve) => server.close(resolve)));
   const address = server.address();
   assert.ok(address && typeof address === "object");
-
   const client = new BridgeClient();
   const result = await client.request(
     "custom-completion",
@@ -1908,12 +1981,12 @@ test("maps a custom OpenAI-compatible provider through Pi", async (t) => {
       model_config: {
         provider_type: "openai_compatible",
         provider_config_id: "custom-completion",
-        pi_provider_id: "aether-test",
+        pi_provider_id: "andex-test",
         pi_api: "openai-completions",
         model_id: "custom-model",
         base_url: `http://127.0.0.1:${address.port}/v1`,
         api_key: "secret-key",
-        custom_headers: { "X-Aether-Test": "present" },
+        custom_headers: { "X-Andex-Test": "present" },
         reasoning: false,
       },
       system_prompt: "Reply briefly.",
@@ -1921,14 +1994,12 @@ test("maps a custom OpenAI-compatible provider through Pi", async (t) => {
       stream: false,
     },
   );
-
   assert.equal(result.assistant_text, "CUSTOM_OK", JSON.stringify(result));
   assert.equal(receivedRequest.url, "/v1/chat/completions");
   assert.equal(receivedRequest.authorization, "Bearer secret-key");
   assert.equal(receivedRequest.customHeader, "present");
   assert.equal(receivedRequest.body.model, "custom-model");
 });
-
 test("falls back from developer to system only for a structured role rejection", async (t) => {
   const receivedRoles = [];
   const server = createServer((request, response) => {
@@ -1957,13 +2028,12 @@ test("falls back from developer to system only for a structured role rejection",
   t.after(() => new Promise((resolve) => server.close(resolve)));
   const address = server.address();
   assert.ok(address && typeof address === "object");
-
   const client = new BridgeClient();
   const result = await client.request("developer-fallback", "complete_once", {
     model_config: {
       provider_type: "openai_compatible",
       provider_config_id: "developer-fallback",
-      pi_provider_id: "aether-developer-fallback",
+      pi_provider_id: "andex-developer-fallback",
       pi_api: "openai-completions",
       model_id: "fallback-model",
       base_url: `http://127.0.0.1:${address.port}/v1`,
@@ -1975,12 +2045,10 @@ test("falls back from developer to system only for a structured role rejection",
     messages: [userMessage("hello")],
     reasoning: "low",
   });
-
   assert.equal(result.assistant_text, "FALLBACK_OK", JSON.stringify(result));
   assert.equal(result.developer_role_unsupported_detected, true);
   assert.deepEqual(receivedRoles, ["developer", "system"]);
 });
-
 test("recognizes explicit developer-role rejections across provider error formats", async (t) => {
   const cases = [
     {
@@ -2023,14 +2091,13 @@ test("recognizes explicit developer-role rejections across provider error format
   t.after(() => new Promise((resolve) => server.close(resolve)));
   const address = server.address();
   assert.ok(address && typeof address === "object");
-
   const client = new BridgeClient();
   for (const { model } of cases) {
     const result = await client.request(`developer-fallback-${model}`, "complete_once", {
       model_config: {
         provider_type: "openai_compatible",
         provider_config_id: `developer-fallback-${model}`,
-        pi_provider_id: "aether-developer-fallback",
+        pi_provider_id: "andex-developer-fallback",
         pi_api: "openai-completions",
         model_id: model,
         base_url: `http://127.0.0.1:${address.port}/v1`,
@@ -2042,13 +2109,11 @@ test("recognizes explicit developer-role rejections across provider error format
       messages: [userMessage("hello")],
       reasoning: "low",
     });
-
     assert.equal(result.assistant_text, "FALLBACK_OK", JSON.stringify(result));
     assert.equal(result.developer_role_unsupported_detected, true);
     assert.deepEqual(rolesByModel.get(model), ["developer", "system"]);
   }
 });
-
 test("applies the developer-role fallback inside an agent turn", async (t) => {
   const receivedRoles = [];
   const server = createServer((request, response) => {
@@ -2076,7 +2141,6 @@ test("applies the developer-role fallback inside an agent turn", async (t) => {
   t.after(() => new Promise((resolve) => server.close(resolve)));
   const address = server.address();
   assert.ok(address && typeof address === "object");
-
   const client = new BridgeClient();
   const result = await client.request(
     "developer-agent-fallback",
@@ -2085,7 +2149,7 @@ test("applies the developer-role fallback inside an agent turn", async (t) => {
       ...turnPayload("session-developer-agent-fallback", [userMessage("hello")], {
         provider_type: "openai_compatible",
         provider_config_id: "developer-agent-fallback",
-        pi_provider_id: "aether-developer-agent-fallback",
+        pi_provider_id: "andex-developer-agent-fallback",
         pi_api: "openai-completions",
         model_id: "agent-fallback-model",
         base_url: `http://127.0.0.1:${address.port}/v1`,
@@ -2096,12 +2160,10 @@ test("applies the developer-role fallback inside an agent turn", async (t) => {
       reasoning: "low",
     },
   );
-
   assert.equal(result.assistant_text, "AGENT_FALLBACK_OK", JSON.stringify(result));
   assert.equal(result.developer_role_unsupported_detected, true);
   assert.deepEqual(receivedRoles, ["developer", "system"]);
 });
-
 test("does not treat unrelated developer errors as role incompatibility", async (t) => {
   let requestCount = 0;
   const server = createServer((request, response) => {
@@ -2118,13 +2180,12 @@ test("does not treat unrelated developer errors as role incompatibility", async 
   t.after(() => new Promise((resolve) => server.close(resolve)));
   const address = server.address();
   assert.ok(address && typeof address === "object");
-
   const client = new BridgeClient();
   const result = await client.request("developer-unrelated-error", "complete_once", {
     model_config: {
       provider_type: "openai_compatible",
       provider_config_id: "developer-unrelated-error",
-      pi_provider_id: "aether-developer-unrelated-error",
+      pi_provider_id: "andex-developer-unrelated-error",
       pi_api: "openai-completions",
       model_id: "unrelated-error-model",
       base_url: `http://127.0.0.1:${address.port}/v1`,
@@ -2136,12 +2197,10 @@ test("does not treat unrelated developer errors as role incompatibility", async 
     messages: [userMessage("hello")],
     reasoning: "low",
   });
-
   assert.match(result.error_message, /developer account api key is invalid/i);
   assert.equal(result.developer_role_unsupported_detected, false);
   assert.equal(requestCount, 1);
 });
-
 test("uses system immediately when the provider is already marked", async (t) => {
   let receivedRole;
   const server = createServer((request, response) => {
@@ -2157,13 +2216,12 @@ test("uses system immediately when the provider is already marked", async (t) =>
   t.after(() => new Promise((resolve) => server.close(resolve)));
   const address = server.address();
   assert.ok(address && typeof address === "object");
-
   const client = new BridgeClient();
   const result = await client.request("developer-marked", "complete_once", {
     model_config: {
       provider_type: "openai_compatible",
       provider_config_id: "developer-marked",
-      pi_provider_id: "aether-developer-marked",
+      pi_provider_id: "andex-developer-marked",
       pi_api: "openai-completions",
       model_id: "marked-model",
       base_url: `http://127.0.0.1:${address.port}/v1`,
@@ -2176,12 +2234,51 @@ test("uses system immediately when the provider is already marked", async (t) =>
     messages: [userMessage("hello")],
     reasoning: "low",
   });
-
   assert.equal(result.assistant_text, "MARKED_OK", JSON.stringify(result));
   assert.equal(result.developer_role_unsupported_detected, false);
   assert.equal(receivedRole, "system");
 });
-
+test("service tier reaches Chat Completions bodies and is omitted when blank", async (t) => {
+  const bodies = [];
+  const server = createServer((request, response) => {
+    const chunks = [];
+    request.on("data", chunk => chunks.push(chunk));
+    request.on("end", () => {
+      bodies.push(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+      writeSuccessfulChatCompletion(response, "TIER_OK", "tier-model");
+    });
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const client = new BridgeClient();
+  for (const tier of [undefined, "  ", " fast ", "ultrafast", "priority"]) {
+    const result = await client.request(`tier-${tier}`, "complete_once", {
+      model_config: {
+        provider_type: "openai_compatible", provider_config_id: "tier-test",
+        pi_provider_id: "andex-tier", pi_api: "openai-completions",
+        model_id: "tier-model", base_url: `http://127.0.0.1:${server.address().port}/v1`,
+        api_key: "test", service_tier: tier, compatibility_mode: true, max_retries: 0,
+      },
+      messages: [userMessage("hello")],
+    });
+    assert.equal(result.assistant_text, "TIER_OK", JSON.stringify(result));
+    assert.equal(bodies.at(-1).service_tier, tier?.trim() || undefined);
+    if (!tier?.trim()) assert.equal(Object.hasOwn(bodies.at(-1), "service_tier"), false);
+  }
+  const sessionDirectory = await mkdtemp(join(tmpdir(), "andex-service-tier-"));
+  t.after(() => rm(sessionDirectory, { recursive: true, force: true }));
+  await client.request("tier-agent", "run_turn", {
+    ...turnPayload("tier-session", [userMessage("hello")], {
+      provider_type: "openai_compatible", provider_config_id: "tier-test",
+      pi_provider_id: "andex-tier", pi_api: "openai-completions",
+      model_id: "tier-model", base_url: `http://127.0.0.1:${server.address().port}/v1`,
+      api_key: "test", service_tier: "ultrafast", max_retries: 0,
+    }),
+    workspace_directory: sessionDirectory,
+    session_directory: sessionDirectory,
+  });
+  assert.equal(bodies.at(-1).service_tier, "ultrafast");
+});
 test("compatibility mode sends system and developer instructions as user messages", async (t) => {
   let receivedRoles = [];
   const server = createServer((request, response) => {
@@ -2197,13 +2294,12 @@ test("compatibility mode sends system and developer instructions as user message
   t.after(() => new Promise((resolve) => server.close(resolve)));
   const address = server.address();
   assert.ok(address && typeof address === "object");
-
   const client = new BridgeClient();
   const result = await client.request("compatibility-mode", "complete_once", {
     model_config: {
       provider_type: "openai_compatible",
       provider_config_id: "compatibility-mode",
-      pi_provider_id: "aether-compatibility-mode",
+      pi_provider_id: "andex-compatibility-mode",
       pi_api: "openai-completions",
       model_id: "compatible-model",
       base_url: `http://127.0.0.1:${address.port}/v1`,
@@ -2216,13 +2312,11 @@ test("compatibility mode sends system and developer instructions as user message
     messages: [userMessage("hello")],
     reasoning: "low",
   });
-
   assert.equal(result.assistant_text, "COMPATIBLE_OK", JSON.stringify(result));
   assert.ok(receivedRoles.length >= 2, JSON.stringify(receivedRoles));
   assert.ok(receivedRoles.every((role) => role !== "system" && role !== "developer"));
   assert.equal(receivedRoles[0], "user");
 });
-
 test("passes reasoning_effort none when off is selected for a model with thinkingLevelMap off: none", async (t) => {
   let receivedRequest;
   const server = createServer((request, response) => {
@@ -2271,7 +2365,6 @@ test("passes reasoning_effort none when off is selected for a model with thinkin
   t.after(() => new Promise((resolve) => server.close(resolve)));
   const address = server.address();
   assert.ok(address && typeof address === "object");
-
   const client = new BridgeClient();
   const result = await client.request(
     "custom-reasoning-none",
@@ -2280,7 +2373,7 @@ test("passes reasoning_effort none when off is selected for a model with thinkin
       model_config: {
         provider_type: "openai_compatible",
         provider_config_id: "custom-reasoning-none",
-        pi_provider_id: "aether-test-reasoning",
+        pi_provider_id: "andex-test-reasoning",
         pi_api: "openai-completions",
         model_id: "reasoning-model",
         base_url: `http://127.0.0.1:${address.port}/v1`,
@@ -2294,12 +2387,10 @@ test("passes reasoning_effort none when off is selected for a model with thinkin
       stream: false,
     },
   );
-
   assert.equal(result.assistant_text, "NONE_OK", JSON.stringify(result));
   assert.equal(receivedRequest.body.reasoning_effort, "none");
   assert.equal(Object.hasOwn(result.usage, "reasoning_tokens"), false);
 });
-
 test("uses models.dev thinking levels instead of Pi's bundled catalog", async (t) => {
   const receivedBodies = [];
   const server = createServer((request, response) => {
@@ -2324,14 +2415,13 @@ test("uses models.dev thinking levels instead of Pi's bundled catalog", async (t
   t.after(() => new Promise((resolve) => server.close(resolve)));
   const address = server.address();
   assert.ok(address && typeof address === "object");
-
   const client = new BridgeClient();
   const complete = (id, reasoning, thinkingLevels) =>
     client.request(id, "complete_once", {
       model_config: {
         provider_type: "custom",
         provider_config_id: id,
-        pi_provider_id: `aether-${id}`,
+        pi_provider_id: `andex-${id}`,
         pi_api: "openai-completions",
         model_id: "muse-spark-1.3",
         base_url: `http://127.0.0.1:${address.port}/v1`,
@@ -2344,17 +2434,14 @@ test("uses models.dev thinking levels instead of Pi's bundled catalog", async (t
       messages: [userMessage("hello")],
       stream: false,
     });
-
   await complete("models-dev-max", "max", ["minimal", "low", "medium", "high", "xhigh", "max"]);
   await complete("models-dev-no-max", "max", ["minimal", "low", "medium", "high", "xhigh"]);
   await complete("models-dev-no-minimal", "minimal", ["low", "medium", "high"]);
-
   assert.deepEqual(
     receivedBodies.map((body) => body.reasoning_effort),
     ["max", "xhigh", "low"],
   );
 });
-
 test("models.dev thinking levels override Pi's bundled catalog for built-in providers", async (t) => {
   const receivedBodies = [];
   const server = createServer((request, response) => {
@@ -2370,7 +2457,6 @@ test("models.dev thinking levels override Pi's bundled catalog for built-in prov
   t.after(() => new Promise((resolve) => server.close(resolve)));
   const address = server.address();
   assert.ok(address && typeof address === "object");
-
   const client = new BridgeClient();
   const complete = (providerId, modelId, thinkingLevels) =>
     client.request(`builtin-models-dev-${providerId}`, "complete_once", {
@@ -2391,18 +2477,15 @@ test("models.dev thinking levels override Pi's bundled catalog for built-in prov
       reasoning: "max",
       stream: false,
     });
-
   // Pi's bundled OpenCode entry maps max to null; models.dev says it is supported.
   await complete("opencode", "muse-spark-1.3", ["minimal", "low", "medium", "high", "xhigh", "max"]);
   // Pi's bundled OpenRouter entry supports max; models.dev says it is not.
   await complete("openrouter", "meta/muse-spark-1.3", ["minimal", "low", "medium", "high", "xhigh"]);
-
   assert.deepEqual(
     receivedBodies.map((body) => body.reasoning?.effort ?? body.reasoning_effort),
     ["max", "xhigh"],
   );
 });
-
 test("updates reasoning effort when reusing an agent session", async (t) => {
   const receivedBodies = [];
   const server = createServer((request, response) => {
@@ -2452,12 +2535,11 @@ test("updates reasoning effort when reusing an agent session", async (t) => {
   t.after(() => new Promise((resolve) => server.close(resolve)));
   const address = server.address();
   assert.ok(address && typeof address === "object");
-
   const client = new BridgeClient();
   const config = {
     provider_type: "openai_compatible",
     provider_config_id: "agent-reasoning-level",
-    pi_provider_id: "aether-test-agent-reasoning",
+    pi_provider_id: "andex-test-agent-reasoning",
     pi_api: "openai-completions",
     model_id: "reasoning-model",
     base_url: `http://127.0.0.1:${address.port}/v1`,
@@ -2476,7 +2558,6 @@ test("updates reasoning effort when reusing an agent session", async (t) => {
     "run_turn",
     { ...turnPayload(sessionId, [userMessage("second")], config), reasoning: "off" },
   );
-
   assert.equal(low.session_reused, false);
   assert.equal(off.session_reused, true);
   assert.deepEqual(receivedBodies.map((body) => body.reasoning_effort), ["low", "none"]);
@@ -2491,7 +2572,6 @@ test("updates reasoning effort when reusing an agent session", async (t) => {
     ),
   );
 });
-
 test("reads top-level reasoning_tokens from OpenAI-compatible completion usage", async (t) => {
   const server = createServer((request, response) => {
     request.resume();
@@ -2549,7 +2629,6 @@ test("reads top-level reasoning_tokens from OpenAI-compatible completion usage",
   t.after(() => new Promise((resolve) => server.close(resolve)));
   const address = server.address();
   assert.ok(address && typeof address === "object");
-
   const client = new BridgeClient();
   const result = await client.request(
     "custom-top-level-reasoning-usage",
@@ -2558,7 +2637,7 @@ test("reads top-level reasoning_tokens from OpenAI-compatible completion usage",
       model_config: {
         provider_type: "openai_compatible",
         provider_config_id: "custom-top-level-reasoning-usage",
-        pi_provider_id: "aether-test-reasoning",
+        pi_provider_id: "andex-test-reasoning",
         pi_api: "openai-completions",
         model_id: "reasoning-model",
         base_url: `http://127.0.0.1:${address.port}/v1`,
@@ -2571,12 +2650,10 @@ test("reads top-level reasoning_tokens from OpenAI-compatible completion usage",
       stream: false,
     },
   );
-
   assert.equal(result.assistant_text, "ANSWER", JSON.stringify(result));
   assert.equal(result.reasoning_text, "Brief reasoning", JSON.stringify(result));
   assert.equal(result.usage.reasoning_tokens, 5, JSON.stringify(result));
 });
-
 test("accepts arbitrary manual model IDs for a built-in provider", async (t) => {
   let receivedRequest;
   const server = createServer((request, response) => {
@@ -2586,7 +2663,7 @@ test("accepts arbitrary manual model IDs for a built-in provider", async (t) => 
       receivedRequest = {
         url: request.url,
         authorization: request.headers.authorization,
-        customHeader: request.headers["x-aether-test"],
+        customHeader: request.headers["x-andex-test"],
         body: JSON.parse(Buffer.concat(chunks).toString("utf8")),
       };
       response.writeHead(400, { "content-type": "application/json" });
@@ -2597,18 +2674,18 @@ test("accepts arbitrary manual model IDs for a built-in provider", async (t) => 
   t.after(() => new Promise((resolve) => server.close(resolve)));
   const address = server.address();
   assert.ok(address && typeof address === "object");
-
   const client = new BridgeClient();
   const result = await client.request("custom-openai-native", "complete_once", {
     model_config: {
       provider_type: "builtin",
       provider_config_id: "custom-openai-native",
+      service_tier: "ultrafast",
       pi_provider_id: "openai",
       pi_api: "builtin",
       model_id: "sfsefehfjksdnf",
       base_url: `http://127.0.0.1:${address.port}/v1`,
       api_key: "secret-key",
-      custom_headers: { "X-Aether-Test": "present" },
+      custom_headers: { "X-Andex-Test": "present" },
       reasoning: true,
       max_retries: 0,
     },
@@ -2617,17 +2694,16 @@ test("accepts arbitrary manual model IDs for a built-in provider", async (t) => 
     reasoning: "high",
     stream: false,
   });
-
   assert.match(result.error_message, /expected test failure|400/);
   assert.equal(receivedRequest.url, "/v1/responses");
   assert.equal(receivedRequest.authorization, "Bearer secret-key");
   assert.equal(receivedRequest.customHeader, "present");
   assert.equal(receivedRequest.body.model, "sfsefehfjksdnf");
   assert.equal(receivedRequest.body.reasoning.effort, "high");
+  assert.equal(receivedRequest.body.service_tier, "ultrafast");
 });
-
 test("omits explicit cache mode for custom OpenAI Responses endpoints", async (t) => {
-  const home = await mkdtemp(join(tmpdir(), "aether-custom-responses-"));
+  const home = await mkdtemp(join(tmpdir(), "andex-custom-responses-"));
   const api = await createOpenAIResponsesServer();
   const client = new BridgeClient({ HOME: home, USERPROFILE: home });
   t.after(async () => {
@@ -2635,7 +2711,6 @@ test("omits explicit cache mode for custom OpenAI Responses endpoints", async (t
     await api.close();
     await rm(home, { recursive: true, force: true });
   });
-
   const sessionId = "custom-responses-compaction";
   await runResponsesTurns(
     client,
@@ -2649,9 +2724,9 @@ test("omits explicit cache mode for custom OpenAI Responses endpoints", async (t
     { session_id: sessionId },
     20_000,
   );
-
   assert.ok(compacted.compaction);
-  assert.equal(api.requests.length, RESPONSES_TEST_TURN_COUNT + 1);
+  // Memory extraction precedes the ordinary compaction request.
+  assert.equal(api.requests.length, RESPONSES_TEST_TURN_COUNT + 2);
   for (const request of api.requests) {
     assert.equal(request.url, "/v1/responses");
     assert.equal(
@@ -2660,9 +2735,8 @@ test("omits explicit cache mode for custom OpenAI Responses endpoints", async (t
     );
   }
 });
-
 test("preserves explicit cache mode for the official OpenAI Responses endpoint", async (t) => {
-  const home = await mkdtemp(join(tmpdir(), "aether-official-responses-"));
+  const home = await mkdtemp(join(tmpdir(), "andex-official-responses-"));
   const api = await createOpenAIResponsesServer();
   const client = new BridgeClient({
     HOME: home,
@@ -2674,7 +2748,6 @@ test("preserves explicit cache mode for the official OpenAI Responses endpoint",
     await api.close();
     await rm(home, { recursive: true, force: true });
   });
-
   const sessionId = "official-responses-compaction";
   await runResponsesTurns(
     client,
@@ -2690,9 +2763,8 @@ test("preserves explicit cache mode for the official OpenAI Responses endpoint",
     { session_id: sessionId },
     20_000,
   );
-
   assert.ok(compacted.compaction);
-  assert.equal(api.requests.length, RESPONSES_TEST_TURN_COUNT + 1);
+  assert.equal(api.requests.length, RESPONSES_TEST_TURN_COUNT + 2);
   for (const request of api.requests) {
     assert.equal(request.url, "/v1/responses");
   }
@@ -2704,18 +2776,15 @@ test("preserves explicit cache mode for the official OpenAI Responses endpoint",
   }
   assert.deepEqual(api.requests.at(-1).body.prompt_cache_options, { mode: "explicit" });
 });
-
 test("lists every built-in Pi provider and its model catalog", async () => {
   const client = new BridgeClient();
   const catalog = await client.request("providers", "list_providers");
   const providers = catalog.providers;
-
   // 42 bundled Pi providers minus the classifier-only typesafe provider.
   assert.equal(providers.length, 41);
   assert.equal(new Set(providers.map((provider) => provider.id)).size, 41);
   assert.ok(providers.every((provider) => provider.models.length > 0));
   assert.ok(providers.every((provider) => provider.models.every((model) => model.id)));
-
   const oauthProviders = providers
     .filter((provider) => provider.auth.oauth)
     .map((provider) => provider.id)
@@ -2732,7 +2801,6 @@ test("lists every built-in Pi provider and its model catalog", async () => {
     "xai",
   ]);
 });
-
 test("validates Pi OAuth protocol requests without legacy provider fallbacks", async () => {
   const client = new BridgeClient();
   const promptResult = await client.request("prompt-missing", "auth_prompt_result", {
@@ -2740,7 +2808,6 @@ test("validates Pi OAuth protocol requests without legacy provider fallbacks", a
     value: "unused",
   });
   assert.equal(promptResult.accepted, false);
-
   await assert.rejects(
     client.request("oauth-unsupported", "login_provider", {
       provider_id: "deepseek",
@@ -2756,15 +2823,13 @@ test("validates Pi OAuth protocol requests without legacy provider fallbacks", a
     /Unknown built-in Pi provider/,
   );
 });
-
 test("bundles every Pi OAuth flow into the standalone bridge", async () => {
   const client = new BridgeClient();
   const providers = [
     ["openai-codex", "select"],
     ["github-copilot", "text"],
-    ["anthropic", "manual_code"],
+    ["anthropic", "select"],
   ];
-
   for (const [providerId, expectedPromptType] of providers) {
     const requestId = `oauth-bundle-${providerId}`;
     const login = client.request(
@@ -2781,16 +2846,26 @@ test("bundles every Pi OAuth flow into the standalone bridge", async () => {
       10_000,
     );
     assert.equal(prompt.payload.prompt_type, expectedPromptType);
-
+    let pendingPrompt = prompt;
+    if (providerId === "anthropic") {
+      await client.request("anthropic-copy-code", "auth_prompt_result", {
+        prompt_id: prompt.payload.prompt_id,
+        value: "copy_code",
+      });
+      pendingPrompt = await client.waitForEvent(
+        (frame) => frame.id === requestId && frame.event === "auth_prompt" &&
+          frame.payload.prompt_type === "manual_code",
+      );
+      assert.equal(pendingPrompt.payload.placeholder, "code#state");
+    }
     const cancelled = await client.request(`cancel-${providerId}`, "auth_prompt_result", {
-      prompt_id: prompt.payload.prompt_id,
+      prompt_id: pendingPrompt.payload.prompt_id,
       cancelled: true,
     });
     assert.equal(cancelled.accepted, true);
     await assert.rejects(login, /cancel/i);
   }
 });
-
 test("keeps Codex browser OAuth ready for an intercepted loopback redirect", async () => {
   const client = new BridgeClient();
   const login = client.request(
@@ -2803,7 +2878,6 @@ test("keeps Codex browser OAuth ready for an intercepted loopback redirect", asy
     },
     15_000,
   );
-
   const authUrl = await client.waitForEvent(
     (frame) => frame.id === "oauth-codex-manual" && frame.event === "auth_url",
   );
@@ -2815,10 +2889,8 @@ test("keeps Codex browser OAuth ready for an intercepted loopback redirect", asy
   );
   assert.match(authUrl.payload.instructions, /authentication window/i);
   assert.equal(manualPrompt.payload.placeholder, "http://localhost:...");
-
   const state = new URL(authUrl.payload.url).searchParams.get("state");
   assert.equal(new URL(authUrl.payload.url).searchParams.get("redirect_uri"), "http://localhost:1455/auth/callback");
-
   const cancelled = await client.request("oauth-codex-cancel", "auth_prompt_result", {
     prompt_id: manualPrompt.payload.prompt_id,
     cancelled: true,
@@ -2826,10 +2898,8 @@ test("keeps Codex browser OAuth ready for an intercepted loopback redirect", asy
   assert.equal(cancelled.accepted, true);
   await assert.rejects(login, /cancel/i);
 });
-
 test("uses Pi provider-specific API key login prompts", async () => {
   const client = new BridgeClient();
-
   const openAILogin = client.request("api-key-openai", "login_provider", {
     provider_id: "openai",
     provider_config_id: `test-${"openai"}`,
@@ -2848,7 +2918,6 @@ test("uses Pi provider-specific API key login prompts", async () => {
   const openAIResult = await openAILogin;
   assert.equal(openAIResult.auth_method, "api_key");
   assert.equal(openAIResult.api_key, "openai-test-key");
-
   const cloudflareLogin = client.request("api-key-cloudflare", "login_provider", {
     provider_id: "cloudflare-ai-gateway",
     provider_config_id: `test-${"cloudflare-ai-gateway"}`,
@@ -2877,7 +2946,6 @@ test("uses Pi provider-specific API key login prompts", async () => {
     CLOUDFLARE_ACCOUNT_ID: "account-id",
     CLOUDFLARE_GATEWAY_ID: "gateway-id",
   });
-
   const bedrockLogin = client.request("api-key-bedrock", "login_provider", {
     provider_id: "amazon-bedrock",
     provider_config_id: `test-${"amazon-bedrock"}`,
@@ -2899,10 +2967,9 @@ test("uses Pi provider-specific API key login prompts", async () => {
   });
   await assert.rejects(bedrockLogin, /cancel/i);
 });
-
-test("rejects non-OpenAI custom Pi APIs", async () => {
+test("rejects unsupported custom Pi APIs", async () => {
   const client = new BridgeClient();
-  for (const piApi of ["anthropic-messages", "google-vertex", "openai-responses"]) {
+  for (const piApi of ["google-vertex", "unknown-api"]) {
     await assert.rejects(
       client.request(`custom-${piApi}`, "complete_once", {
         model_config: {

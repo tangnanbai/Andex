@@ -38,11 +38,11 @@ val nightlyKeystoreFile = localOrEnv("nightly.storeFile", "NIGHTLY_KEYSTORE_FILE
 val nightlyKeystorePassword = localOrEnv("nightly.storePassword", "NIGHTLY_KEYSTORE_PASSWORD")
 val nightlyKeyAlias = localOrEnv("nightly.keyAlias", "NIGHTLY_KEY_ALIAS")
 val nightlyKeyPassword = localOrEnv("nightly.keyPassword", "NIGHTLY_KEY_PASSWORD")
-val appVersionName = providers.gradleProperty("aether.versionName")
+val appVersionName = providers.gradleProperty("andex.versionName")
     .orNull
     ?.trim()
     ?.takeIf { it.isNotEmpty() }
-    ?: "2.1.6"
+    ?: "0.97"
 val piBridgeProjectDir = rootProject.layout.projectDirectory.dir("pi-bridge")
 val piBridgeGeneratedAssetsDir = layout.buildDirectory.dir("generated/assets/piBridge")
 val preinstalledExtensionsDir = rootProject.layout.projectDirectory.dir("extensions")
@@ -105,16 +105,16 @@ abstract class SyncGeneratedSourceDirectory : Sync() {
 }
 
 android {
-    namespace = "com.zhousl.aether"
+    namespace = "com.android.andex"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.baimoqilin.aether"
+        applicationId = "com.android.andex"
         minSdk = 26
         // Alpine/Termux-style local runtimes install executable ELF files into app-private
         // storage. Android blocks execve() from that location for targetSdk >= 29.
         targetSdk = 28
-        versionCode = 11
+        versionCode = 23
         versionName = appVersionName
 
         ndk {
@@ -152,7 +152,6 @@ android {
 
     buildTypes {
         debug {
-            applicationIdSuffix = ".debug"
             manifestPlaceholders["appIcon"] = "@mipmap/ic_launcher"
             manifestPlaceholders["appRoundIcon"] = "@mipmap/ic_launcher_round"
             manifestPlaceholders["appLabel"] = "@string/app_name"
@@ -162,7 +161,7 @@ android {
             initWith(getByName("debug"))
             applicationIdSuffix = ".showcase"
             matchingFallbacks += listOf("debug")
-            resValue("string", "showcase_app_name", "Aether Showcase")
+            resValue("string", "showcase_app_name", "Andex Showcase")
             manifestPlaceholders["appIcon"] = "@mipmap/ic_launcher"
             manifestPlaceholders["appRoundIcon"] = "@mipmap/ic_launcher_round"
             manifestPlaceholders["appLabel"] = "@string/showcase_app_name"
@@ -185,7 +184,7 @@ android {
             initWith(getByName("release"))
             applicationIdSuffix = ".nightly"
             matchingFallbacks += listOf("release")
-            resValue("string", "nightly_app_name", "Aether Nightly")
+            resValue("string", "nightly_app_name", "Andex Nightly")
             buildConfigField("String", "UPDATE_CHANNEL", "\"nightly\"")
             manifestPlaceholders["appIcon"] = "@mipmap/ic_launcher_nightly"
             manifestPlaceholders["appRoundIcon"] = "@mipmap/ic_launcher_nightly_round"
@@ -315,6 +314,7 @@ val buildPiBridge = tasks.register<Exec>("buildPiBridge") {
     inputs.file(piBridgeProjectDir.file("tsconfig.json"))
     inputs.dir(piBridgeProjectDir.dir("scripts"))
     inputs.dir(piBridgeProjectDir.dir("src"))
+    inputs.file(preinstalledExtensionsDir.file("pi-long-memory/store.ts"))
     outputs.file(piBridgeProjectDir.file("dist/bridge.mjs"))
 }
 

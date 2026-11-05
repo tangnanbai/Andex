@@ -343,4 +343,3 @@ export function getConfig(type: string): {
     promptMode: "append",
   };
 }
-

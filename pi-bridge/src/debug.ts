@@ -87,10 +87,10 @@ function normalizeDetails(details: Record<string, unknown>): string {
 
 /**
  * Returns true when verbose bridge debug logging is enabled. Hosts can set
- * AETHER_PI_BRIDGE_DEBUG, and local troubleshooting can use PI_BRIDGE_DEBUG.
+ * ANDEX_PI_BRIDGE_DEBUG, and local troubleshooting can use PI_BRIDGE_DEBUG.
  */
 export function bridgeDebugEnabled(): boolean {
-  const raw = process.env.AETHER_PI_BRIDGE_DEBUG ?? process.env.PI_BRIDGE_DEBUG ?? "";
+  const raw = process.env.ANDEX_PI_BRIDGE_DEBUG ?? process.env.PI_BRIDGE_DEBUG ?? "";
   const normalized = raw.trim().toLowerCase();
   return normalized !== "" && normalized !== "0" && normalized !== "false";
 }

@@ -1,7 +1,7 @@
 import {
-  defineAetherExtension,
+  defineAndexExtension,
   ui,
-} from "@baimoqilin/aether-extension-api";
+} from "@tangnanbai/andex-extension-api";
 
 type Skill = {
   id: string;
@@ -12,27 +12,27 @@ type Skill = {
   default_selected?: boolean;
 };
 
-export const activateAether = defineAetherExtension((aether) => {
-  aether.registerAction("toggle-expanded", ({ expanded }) => {
-    aether.storage.set("expanded", Boolean(expanded));
+export const activateAndex = defineAndexExtension((andex) => {
+  andex.registerAction("toggle-expanded", ({ expanded }) => {
+    andex.storage.set("expanded", Boolean(expanded));
   });
 
-  aether.registerAction("set-skill", async ({ skill_id, checked }) => {
-    await aether.services.invoke("skills", "setSelected", {
+  andex.registerAction("set-skill", async ({ skill_id, checked }) => {
+    await andex.services.invoke("skills", "setSelected", {
       skill_id,
       selected: Boolean(checked),
       scope: "both",
     });
   });
 
-  aether.registerAction("clear", async () => {
-    await aether.services.invoke("skills", "setSelection", {
+  andex.registerAction("clear", async () => {
+    await andex.services.invoke("skills", "setSelection", {
       ids: [],
       scope: "both",
     });
   });
 
-  aether.registerComponent("chat.composer.actionTray", {
+  andex.registerComponent("chat.composer.actionTray", {
     id: "global-skill-tray",
     mode: "replace",
     order: 100,
@@ -115,14 +115,14 @@ export const activateAether = defineAetherExtension((aether) => {
     },
   });
 
-  aether.registerComponent("chat.composer.skillPicker", {
+  andex.registerComponent("chat.composer.skillPicker", {
     id: "hide-native-skill-picker",
     mode: "hide",
     order: 100,
   });
 
   /* Settings are the only native extension page entry point. */
-  aether.registerSettings({
+  andex.registerSettings({
     id: "global-skills",
     title: "Global Skills",
     subtitle: "Persistent defaults powered by Mod Kernel v2",

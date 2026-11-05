@@ -30,14 +30,13 @@ import * as typeboxCompile from "typebox/compile";
 import * as typeboxValue from "typebox/value";
 import { loadExtensionFromFactory } from "../node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/loader.js";
 import {
-  aetherAppExtensionCountForManifest,
-  aetherExtensionApiModule,
-} from "./aether-extensions.js";
+  andexAppExtensionCountForManifest,
+  andexExtensionApiModule,
+} from "./andex-extensions.js";
 import {
   ensureExtensionPackageDependencies,
   packageRootForExtensionPath,
 } from "./extension-dependencies.js";
-
 const EXTENSION_FILE_PATTERN = /\.(?:[cm]?[jt]s)$/i;
 const INDEX_FILE_NAMES = [
   "index.ts",
@@ -48,8 +47,7 @@ const INDEX_FILE_NAMES = [
   "index.cjs",
 ];
 const PI_AGENT_DIRECTORY = path.join(os.homedir(), ".pi", "agent");
-const AETHER_JITI_CACHE = path.join(os.homedir(), ".aether", "cache", "jiti");
-
+const ANDEX_JITI_CACHE = path.join(os.homedir(), ".andex", "cache", "jiti");
 const virtualModules: Record<string, unknown> = {
   typebox,
   "typebox/compile": typeboxCompile,
@@ -69,51 +67,33 @@ const virtualModules: Record<string, unknown> = {
   "@mariozechner/pi-ai/oauth": piAiOauth,
   "@mariozechner/pi-coding-agent": piCodingAgent,
   "@mariozechner/pi-tui": piTui,
-  "@baimoqilin/aether-extension-api": aetherExtensionApiModule,
-  "@aether/extension-api": aetherExtensionApiModule,
-  "@aether/android-extension": aetherExtensionApiModule,
+  "@tangnanbai/andex-extension-api": andexExtensionApiModule,
+  "@andex/extension-api": andexExtensionApiModule,
+  "@andex/android-extension": andexExtensionApiModule,
 };
-
-export interface AetherExtensionLoadError {
+export interface AndexExtensionLoadError {
   path: string;
   error: string;
 }
-
-export interface AetherExtensionRuntime {
+export interface AndexExtensionRuntime {
   runner: ExtensionRunner;
   runtime: ExtensionRuntime;
   sessionManager: SessionManager;
   modelRegistry: ModelRegistry;
   paths: string[];
-  errors: AetherExtensionLoadError[];
+  errors: AndexExtensionLoadError[];
 }
-
-export interface AetherExtensionLoadOptions {
+export interface AndexExtensionLoadOptions {
   disabledExtensionPaths?: string[];
   disabledPackageSources?: string[];
 }
-
-export interface AetherInstalledExtensionPackage {
-  source: string;
-  scope: "user" | "project";
-  filtered: boolean;
-  installedPath?: string;
-  name: string;
-  version: string;
-  description: string;
-  extensionCount: number;
-  aetherExtensionCount: number;
-  nativeEntrypointCount: number;
-  skillCount: number;
-  promptCount: number;
-  themeCount: number;
-  skillPaths: string[];
-}
-
-type AetherConfiguredPackage = ReturnType<
-  DefaultPackageManager["listConfiguredPackages"]
->[number];
-
+export {
+  listExtensionPackages as listAndexExtensionPackages,
+  installExtensionPackage as installAndexExtensionPackage,
+  updateExtensionPackage as updateAndexExtensionPackage,
+  removeExtensionPackage as removeAndexExtensionPackage,
+} from "./extension-packages.js";
+export type { InstalledExtensionPackage as AndexInstalledExtensionPackage } from "./extension-packages.js";
 function readJsonFile(filePath: string): Record<string, unknown> | undefined {
   try {
     const parsed = JSON.parse(fs.readFileSync(filePath, "utf8"));
@@ -124,7 +104,6 @@ function readJsonFile(filePath: string): Record<string, unknown> | undefined {
     return undefined;
   }
 }
-
 function isPathDisabled(
   candidatePath: string,
   disabledPaths: Set<string>,
@@ -139,7 +118,6 @@ function isPathDisabled(
     );
   });
 }
-
 function packageExtensionPaths(directory: string): string[] {
   const manifest = readJsonFile(path.join(directory, "package.json"));
   const pi = manifest?.pi;
@@ -152,14 +130,13 @@ function packageExtensionPaths(directory: string): string[] {
       if (paths.length > 0) return paths;
     }
   }
-  if (aetherAppExtensionCountForManifest(manifest) > 0) return [];
+  if (andexAppExtensionCountForManifest(manifest) > 0) return [];
   for (const name of INDEX_FILE_NAMES) {
     const candidate = path.join(directory, name);
     if (fs.existsSync(candidate)) return [candidate];
   }
   return [];
 }
-
 function extensionEntriesAt(candidatePath: string): string[] {
   let stat: fs.Stats;
   try {
@@ -173,7 +150,6 @@ function extensionEntriesAt(candidatePath: string): string[] {
   if (!stat.isDirectory()) return [];
   return packageExtensionPaths(candidatePath);
 }
-
 function extensionEntriesInRoot(root: string): string[] {
   let entries: fs.Dirent[];
   try {
@@ -185,15 +161,14 @@ function extensionEntriesInRoot(root: string): string[] {
     .sort((left, right) => left.name.localeCompare(right.name))
     .flatMap((entry) => extensionEntriesAt(path.join(root, entry.name)));
 }
-
-export function discoverAetherExtensionPaths(
+export function discoverAndexExtensionPaths(
   cwd: string,
   configuredPaths: string[] = [],
 ): string[] {
   const roots = [
     path.join(os.homedir(), ".pi", "agent", "extensions"),
     path.join(cwd, ".pi", "extensions"),
-    path.join(os.homedir(), ".aether", "extensions"),
+    path.join(os.homedir(), ".andex", "extensions"),
   ];
   const discovered = [
     ...roots.flatMap(extensionEntriesInRoot),
@@ -203,7 +178,6 @@ export function discoverAetherExtensionPaths(
   ];
   return [...new Set(discovered.map((entry) => path.resolve(entry)))];
 }
-
 function createPackageManager(cwd: string): DefaultPackageManager {
   const settingsManager = SettingsManager.create(cwd, PI_AGENT_DIRECTORY, {
     projectTrusted: false,
@@ -214,7 +188,6 @@ function createPackageManager(cwd: string): DefaultPackageManager {
     settingsManager,
   });
 }
-
 export async function discoverPackageExtensionPaths(
   cwd: string,
   disabledPackageSources: Set<string> = new Set(),
@@ -225,176 +198,10 @@ export async function discoverPackageExtensionPaths(
     .filter((entry) => !disabledPackageSources.has(entry.metadata.source))
     .map((entry) => path.resolve(entry.path));
 }
-
-function packageManifest(configuredPackage: AetherConfiguredPackage): Record<string, unknown> | undefined {
-  if (!configuredPackage.installedPath) return undefined;
-  return readJsonFile(path.join(configuredPackage.installedPath, "package.json"));
-}
-
-function manifestExtensionCount(manifest: Record<string, unknown> | undefined): number {
-  const pi = manifest?.pi;
-  if (!pi || typeof pi !== "object" || Array.isArray(pi)) return 0;
-  const extensions = (pi as Record<string, unknown>).extensions;
-  return Array.isArray(extensions)
-    ? extensions.filter((entry) => typeof entry === "string").length
-    : 0;
-}
-
-function manifestNativeEntrypointCount(
-  manifest: Record<string, unknown> | undefined,
-): number {
-  const aether = manifest?.aether;
-  if (!aether || typeof aether !== "object" || Array.isArray(aether)) return 0;
-  const native = (aether as Record<string, unknown>).native;
-  if (!native || typeof native !== "object" || Array.isArray(native)) return 0;
-  const nativeManifest = native as Record<string, unknown>;
-  if (nativeManifest.enabled === false) return 0;
-  const countConfigured = (configured: unknown): number => {
-    if (Array.isArray(configured)) {
-      return configured.filter((entry) =>
-        typeof entry === "string" && entry.trim().length > 0
-      ).length;
-    }
-    return typeof configured === "string" && configured.trim().length > 0
-      ? 1
-      : 0;
-  };
-  return countConfigured(nativeManifest.entrypoints) ||
-    countConfigured(nativeManifest.entrypoint);
-}
-
-interface AetherPackageResources {
-  extensions: string[];
-  skills: string[];
-  prompts: string[];
-  themes: string[];
-}
-
-function packageResourcesForSource(
-  source: string,
-  resolved: Awaited<ReturnType<DefaultPackageManager["resolve"]>>,
-): AetherPackageResources {
-  const pathsFor = (
-    entries: Awaited<ReturnType<DefaultPackageManager["resolve"]>>["extensions"],
-  ): string[] =>
-    entries
-      .filter((entry) => entry.enabled && entry.metadata.source === source)
-      .map((entry) => path.resolve(entry.path));
-  return {
-    extensions: pathsFor(resolved.extensions),
-    skills: pathsFor(resolved.skills),
-    prompts: pathsFor(resolved.prompts),
-    themes: pathsFor(resolved.themes),
-  };
-}
-
-function installedPackagePayload(
-  configuredPackage: AetherConfiguredPackage,
-  resources: AetherPackageResources,
-): AetherInstalledExtensionPackage {
-  const manifest = packageManifest(configuredPackage);
-  return {
-    source: configuredPackage.source,
-    scope: configuredPackage.scope,
-    filtered: configuredPackage.filtered,
-    installedPath: configuredPackage.installedPath,
-    name:
-      (typeof manifest?.name === "string" && manifest.name.trim()) ||
-      configuredPackage.source.replace(/^npm:/, ""),
-    version: typeof manifest?.version === "string" ? manifest.version : "",
-    description: typeof manifest?.description === "string" ? manifest.description : "",
-    extensionCount: resources.extensions.length || manifestExtensionCount(manifest),
-    aetherExtensionCount: aetherAppExtensionCountForManifest(manifest),
-    nativeEntrypointCount: manifestNativeEntrypointCount(manifest),
-    skillCount: resources.skills.length,
-    promptCount: resources.prompts.length,
-    themeCount: resources.themes.length,
-    skillPaths: resources.skills,
-  };
-}
-
-export async function listAetherExtensionPackages(
-  cwd: string,
-): Promise<AetherInstalledExtensionPackage[]> {
-  const packageManager = createPackageManager(cwd);
-  const configuredPackages = packageManager
-    .listConfiguredPackages()
-    .filter((configuredPackage) => configuredPackage.scope === "user");
-  if (configuredPackages.length === 0) return [];
-  const resolved = await packageManager.resolve();
-  return configuredPackages
-    .map((configuredPackage) =>
-      installedPackagePayload(
-        configuredPackage,
-        packageResourcesForSource(configuredPackage.source, resolved),
-      ),
-    )
-    .sort((left, right) => left.name.localeCompare(right.name));
-}
-
-function requireNpmPackageSource(source: string): string {
-  const normalized = source.trim();
-  if (!normalized.startsWith("npm:") || normalized.length <= 4 || /\s/.test(normalized)) {
-    throw new Error("Pi packages must use an npm: source.");
-  }
-  return normalized;
-}
-
-export async function installAetherExtensionPackage(
-  cwd: string,
-  source: string,
-): Promise<void> {
-  await createPackageManager(cwd).installAndPersist(requireNpmPackageSource(source));
-}
-
-export async function removeAetherExtensionPackage(
-  cwd: string,
-  source: string,
-): Promise<boolean> {
-  const normalized = requireNpmPackageSource(source);
-  const settingsManager = SettingsManager.create(cwd, PI_AGENT_DIRECTORY, {
-    projectTrusted: false,
-  });
-  const packageManager = new DefaultPackageManager({
-    cwd,
-    agentDir: PI_AGENT_DIRECTORY,
-    settingsManager,
-  });
-  const configuredPackage = packageManager.listConfiguredPackages().find((entry) =>
-    entry.scope === "user" && entry.source === normalized
-  );
-  if (!configuredPackage) return false;
-
-  const installedPath = configuredPackage.installedPath;
-  if (installedPath) {
-    const managedRoot = path.resolve(PI_AGENT_DIRECTORY, "npm", "node_modules");
-    const resolvedPath = path.resolve(installedPath);
-    const relative = path.relative(managedRoot, resolvedPath);
-    if (relative === "" || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
-      throw new Error("Refusing to remove an extension package outside the managed npm directory.");
-    }
-    fs.rmSync(resolvedPath, { recursive: true, force: true });
-  }
-
-  const configured = settingsManager.getGlobalSettings().packages ?? [];
-  settingsManager.setPackages(configured.filter((entry) => {
-    const configuredSource = typeof entry === "string" ? entry : entry.source;
-    return configuredSource !== normalized;
-  }));
-  return true;
-}
-
-export async function updateAetherExtensionPackage(
-  cwd: string,
-  source: string,
-): Promise<void> {
-  await createPackageManager(cwd).update(requireNpmPackageSource(source));
-}
-
 async function loadFactory(extensionPath: string): Promise<ExtensionFactory> {
   const jiti = createJiti(import.meta.url, {
     moduleCache: false,
-    fsCache: AETHER_JITI_CACHE,
+    fsCache: ANDEX_JITI_CACHE,
     tryNative: false,
     virtualModules,
   });
@@ -404,32 +211,30 @@ async function loadFactory(extensionPath: string): Promise<ExtensionFactory> {
   }
   return factory as ExtensionFactory;
 }
-
-export async function loadAetherExtensions(
+export async function loadAndexExtensions(
   cwd: string,
   configuredPaths: string[] = [],
-  loadOptions: AetherExtensionLoadOptions = {},
-): Promise<AetherExtensionRuntime> {
+  loadOptions: AndexExtensionLoadOptions = {},
+): Promise<AndexExtensionRuntime> {
   const disabledExtensionPaths = new Set(
     (loadOptions.disabledExtensionPaths ?? []).map((entry) => path.resolve(entry)),
   );
   const disabledPackageSources = new Set(loadOptions.disabledPackageSources ?? []);
   const paths = [
-    ...discoverAetherExtensionPaths(cwd, configuredPaths)
+    ...discoverAndexExtensionPaths(cwd, configuredPaths)
       .filter((entry) => !isPathDisabled(entry, disabledExtensionPaths)),
     ...(await discoverPackageExtensionPaths(cwd, disabledPackageSources)),
   ].filter((entry, index, entries) => entries.indexOf(entry) === index);
   const runtime = createExtensionRuntime();
   const eventBus = createEventBus();
   const extensions: Extension[] = [];
-  const errors: AetherExtensionLoadError[] = [];
+  const errors: AndexExtensionLoadError[] = [];
   const installedDependencyRoots = new Set<string>();
-
   for (const extensionPath of paths) {
     try {
       const packageRoot = packageRootForExtensionPath(
         extensionPath,
-        path.join(os.homedir(), ".aether", "extensions"),
+        path.join(os.homedir(), ".andex", "extensions"),
       );
       if (packageRoot && !installedDependencyRoots.has(packageRoot)) {
         installedDependencyRoots.add(packageRoot);
@@ -446,7 +251,6 @@ export async function loadAetherExtensions(
       });
     }
   }
-
   const sessionManager = SessionManager.inMemory(cwd);
   const modelRuntime = await ModelRuntime.create({
     credentials: new InMemoryCredentialStore(),
@@ -474,8 +278,7 @@ export async function loadAetherExtensions(
     errors,
   };
 }
-
-export function extensionTools(extensionRuntime: AetherExtensionRuntime) {
+export function extensionTools(extensionRuntime: AndexExtensionRuntime) {
   return wrapRegisteredTools(
     extensionRuntime.runner.getAllRegisteredTools(),
     extensionRuntime.runner,

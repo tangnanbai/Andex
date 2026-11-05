@@ -5,24 +5,24 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
-- Added a per-provider **Base URL** override next to each provider's API key in the Aether settings (and as `<provider>BaseUrl` config keys: `braveBaseUrl`, `parallelBaseUrl`, `tinyfishBaseUrl`, `search1apiBaseUrl`, `searchinfinityBaseUrl`, `queritBaseUrl`, `tavilyBaseUrl`, `serpdiveBaseUrl`, `kagiBaseUrl`, `ollamaBaseUrl`, `exaBaseUrl`, `perplexityBaseUrl`, `anysearchBaseUrl`, `xaiBaseUrl`, `brightdataBaseUrl`, `serpbaseBaseUrl`). A bare-origin value mirrors every endpoint of the provider to that origin; a full URL replaces the primary endpoint.
-- Provider API keys are now shown back in the Aether settings form as masked password fields displaying the currently configured value, instead of replacement-only empty fields. Clearing the field removes the credential from the config.
+- Added a per-provider **Base URL** override next to each provider's API key in the Andex settings (and as `<provider>BaseUrl` config keys: `braveBaseUrl`, `parallelBaseUrl`, `tinyfishBaseUrl`, `search1apiBaseUrl`, `searchinfinityBaseUrl`, `queritBaseUrl`, `tavilyBaseUrl`, `serpdiveBaseUrl`, `kagiBaseUrl`, `ollamaBaseUrl`, `exaBaseUrl`, `perplexityBaseUrl`, `anysearchBaseUrl`, `xaiBaseUrl`, `brightdataBaseUrl`, `serpbaseBaseUrl`). A bare-origin value mirrors every endpoint of the provider to that origin; a full URL replaces the primary endpoint.
+- Provider API keys are now shown back in the Andex settings form as masked password fields displaying the currently configured value, instead of replacement-only empty fields. Clearing the field removes the credential from the config.
 
 ### Changed
-- The Aether integration is now Script-only: the Android Native Mod (`native/mod.dex`) has been removed, and semantic tool-card titles for the four default tools are registered through the Aether Script API (`aether.registerToolTitle`). Older Aether builds without that Script API keep the built-in fallback titles.
-- The Aether settings page is reorganized: the **Web search tools** toggle now sits in a card at the top of the first-level settings page, directly above the category list (Provider, Context Extraction, Privacy and network). The Provider sub-page has two cards — **Provider** (default search provider, then the selected provider's API key, base URL, and provider-specific options; switching providers swaps the key/base URL fields, and providers without a key show none) and **Advanced** (routing, review workflow, curator timeout, auto-open, summary model). The first-level toggle card requires the Aether build that renders page-level setting sections on extension settings pages (bridge + app change, shipped with this release).
+- The Andex integration is now Script-only: the Android Native Mod (`native/mod.dex`) has been removed, and semantic tool-card titles for the four default tools are registered through the Andex Script API (`andex.registerToolTitle`). Older Andex builds without that Script API keep the built-in fallback titles.
+- The Andex settings page is reorganized: the **Web search tools** toggle now sits in a card at the top of the first-level settings page, directly above the category list (Provider, Context Extraction, Privacy and network). The Provider sub-page has two cards — **Provider** (default search provider, then the selected provider's API key, base URL, and provider-specific options; switching providers swaps the key/base URL fields, and providers without a key show none) and **Advanced** (routing, review workflow, curator timeout, auto-open, summary model). The first-level toggle card requires the Andex build that renders page-level setting sections on extension settings pages (bridge + app change, shipped with this release).
 - Context Extraction is now split into **GitHub**, **YouTube**, and **PDF** cards.
 - Slider-based numeric settings (curator idle timeout, PDF size limit) are now direct fill-in number fields.
 
-## [0.18.0-aether.1] - 2026-08-14
+## [0.18.0-andex.1] - 2026-08-14
 
 ### Added
-- Added an Aether Script API v2 integration with a native settings page, composer research action, custom web-activity message renderers, and an Android transcript fallback.
-- Added an Aether Native API v1 Mod that gives the default search, source-check, fetch, and stored-content tools semantic running and completed titles.
+- Added an Andex Script API v2 integration with a native settings page, composer research action, custom web-activity message renderers, and an Android transcript fallback.
+- Added an Andex Native API v1 Mod that gives the default search, source-check, fetch, and stored-content tools semantic running and completed titles.
 
 ### Changed
-- Aether setting changes are written atomically to the existing Pi `web-search.json` while preserving unknown fields. Existing credential values are not copied into Aether extension storage or displayed in the settings form.
-- The Aether settings page is now a single Web Access entry with sub-pages (categories): Provider, Context Extraction, and Privacy and network. The Provider sub-page shows the selected provider's credential and options only — switching the default provider swaps the visible fields while keeping other providers' saved values intact.
+- Andex setting changes are written atomically to the existing Pi `web-search.json` while preserving unknown fields. Existing credential values are not copied into Andex extension storage or displayed in the settings form.
+- The Andex settings page is now a single Web Access entry with sub-pages (categories): Provider, Context Extraction, and Privacy and network. The Provider sub-page shows the selected provider's credential and options only — switching the default provider swaps the visible fields while keeping other providers' saved values intact.
 
 ## [0.18.0] - 2026-08-03
 
