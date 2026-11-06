@@ -14,6 +14,8 @@ import android.view.accessibility.AccessibilityNodeInfo
 import java.io.ByteArrayOutputStream
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -23,9 +25,48 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 class PhoneAccessibilityService : AccessibilityService() {
+    private val persistenceScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.Main.immediate)
+    private var persistenceJob: kotlinx.coroutines.Job? = null
+    private var foregroundActive = false
     override fun onServiceConnected() {
+        super.onServiceConnected()
         instance = this
         PhoneControlPreferences(this).accessibilityPreviouslyGranted = true
+        // Accessibility authorization belongs to the system. Keep the authorized service
+        // alive when the UI task is swiped away; never disable/re-enable it on app exit.
+        persistenceJob?.cancel()
+        persistenceJob = persistenceScope.launch {
+            while (true) {
+                runCatching { updatePersistence() }
+                delay(3000)
+            }
+        }
+    }
+
+    private fun updatePersistence() {
+        if (!PhoneControlPreferences(this).enabled) {
+            if (foregroundActive) stopForeground(STOP_FOREGROUND_REMOVE)
+            foregroundActive = false
+            return
+        }
+        if (foregroundActive) return
+        val channel = "andex_accessibility"
+        if (Build.VERSION.SDK_INT >= 26) {
+            getSystemService(android.app.NotificationManager::class.java).createNotificationChannel(
+                android.app.NotificationChannel(channel, "手机控制连接", android.app.NotificationManager.IMPORTANCE_LOW),
+            )
+        }
+        val open = android.app.PendingIntent.getActivity(this, 0,
+            android.content.Intent(this, com.android.andex.MainActivity::class.java),
+            android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE)
+        val notification = androidx.core.app.NotificationCompat.Builder(this, channel)
+            .setSmallIcon(com.android.andex.R.drawable.ic_notification_small)
+            .setContentTitle("Andex · 手机控制已就绪")
+            .setContentText("保持已授权的无障碍连接；可在 Agent 模式关闭手机控制。")
+            .setContentIntent(open).setOngoing(true).setOnlyAlertOnce(true).build()
+        androidx.core.app.ServiceCompat.startForeground(this, 1003, notification,
+            if (Build.VERSION.SDK_INT >= 34) android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE else 0)
+        foregroundActive = true
     }
 
     private var lastWindowEvent = 0L
@@ -35,11 +76,15 @@ class PhoneAccessibilityService : AccessibilityService() {
     }
     override fun onInterrupt() = Unit
     override fun onUnbind(intent: android.content.Intent?): Boolean {
+        persistenceJob?.cancel()
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        foregroundActive = false
         if (instance === this) instance = null
         return super.onUnbind(intent)
     }
 
     override fun onDestroy() {
+        persistenceScope.cancel()
         if (instance === this) instance = null
         super.onDestroy()
     }

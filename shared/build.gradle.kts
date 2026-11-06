@@ -53,6 +53,7 @@ kotlin {
             implementation(libs.coil.svg)
         }
         androidMain.dependencies {
+            implementation("io.github.jaredmdobson:concentus:1.0.2")
             implementation(libs.ktor.client.okhttp)
             implementation(libs.androidx.activity.compose)
             implementation(libs.androidx.lifecycle.runtime.compose)

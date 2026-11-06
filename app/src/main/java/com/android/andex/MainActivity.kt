@@ -24,9 +24,23 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val background = getSharedPreferences("window_appearance", MODE_PRIVATE).getInt("background", android.graphics.Color.BLACK)
+        window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(background))
+        window.decorView.setBackgroundColor(background)
         enableEdgeToEdge()
+        window.setSoftInputMode(
+            android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE or
+                android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN,
+        )
         acceptTaskIntent(intent)
         setContent {
+            val focus = androidx.compose.ui.platform.LocalFocusManager.current
+            val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+            val orientation = androidx.compose.ui.platform.LocalConfiguration.current.orientation
+            androidx.compose.runtime.LaunchedEffect(orientation) {
+                focus.clearFocus(force = true)
+                keyboard?.hide()
+            }
             AndexApp(
                 onNotificationPermissionRequested = ::maybeRequestNotificationPermission,
                 externalSessionId = externalSessionId,

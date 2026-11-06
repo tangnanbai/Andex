@@ -6,6 +6,18 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class WorkTraceModelsTest {
+    @Test fun newestRowAccountsForPreviouslyExpandedHistory() {
+        val tasks = groupWorkTraceSteps(listOf(
+            WorkTraceStep("u1", "旧任务", "", "输入"),
+            WorkTraceStep("t1", "命令", "pwd", "工具"),
+            WorkTraceStep("u2", "新任务", "", "输入"),
+            WorkTraceStep("t2", "搜索", "query", "工具"),
+        ))
+        assertEquals(3, workTraceLatestRowIndex(tasks) { it.id == "u2" })
+        assertEquals(5, workTraceLatestRowIndex(tasks) { true })
+        assertEquals("pwd", workTraceStepPreview(tasks.first().steps.last()))
+        assertEquals("echo ok", workTraceStepPreview(WorkTraceStep("x", "命令", "输出", "工具", command = "echo ok\n")))
+    }
     @Test
     fun requestsAreSeparateGroupsWithTheOriginalInputAsTitle() {
         val title = "搜索 Qwen 新闻并整理标题与链接".repeat(30)

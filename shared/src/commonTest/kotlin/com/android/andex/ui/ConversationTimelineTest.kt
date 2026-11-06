@@ -2,6 +2,8 @@ package com.android.andex.ui
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
+import kotlin.test.assertFalse
 
 class ConversationTimelineTest {
     @Test
@@ -27,5 +29,14 @@ class ConversationTimelineTest {
         assertEquals(0, timelineIndexForPosition(0f, args[0], 5, args[1], args[2]))
         assertEquals(2, timelineIndexForPosition(50f, args[0], 5, args[1], args[2]))
         assertEquals(4, timelineIndexForPosition(100f, args[0], 5, args[1], args[2]))
+    }
+
+    @Test fun overshootingBottomSelectsLastTurnAndStillCommits() {
+        assertEquals(49, timelineIndexForPosition(700f, 500f, 50, 10f, 3f))
+        assertTrue(timelineGestureCommits(false, 90f, 8f, 40f, 58f, 28f))
+        assertEquals(0, timelineIndexForPosition(-100f, 500f, 50, 10f, 3f))
+        assertFalse(timelineGestureCommits(false, 90f, 8f, -60f, 58f, 28f))
+        assertFalse(timelineGestureCommits(true, 90f, 8f, 40f, 58f, 28f))
+        assertFalse(timelineGestureCommits(false, 2f, 8f, 40f, 58f, 28f))
     }
 }

@@ -3,12 +3,14 @@
     <cloud-backup>
         <exclude domain="sharedpref" path="phone_control.xml" />
         <exclude domain="sharedpref" path="first_launch_permissions.xml" />
+        <exclude domain="sharedpref" path="doubao_ime_private.xml" />
         <exclude domain="file" path="runtimes/termux/" />
         <exclude domain="file" path="runtimes/native-tools/" />
     </cloud-backup>
     <device-transfer>
         <exclude domain="sharedpref" path="phone_control.xml" />
         <exclude domain="sharedpref" path="first_launch_permissions.xml" />
+        <exclude domain="sharedpref" path="doubao_ime_private.xml" />
         <exclude domain="file" path="runtimes/termux/" />
         <exclude domain="file" path="runtimes/native-tools/" />
     </device-transfer>

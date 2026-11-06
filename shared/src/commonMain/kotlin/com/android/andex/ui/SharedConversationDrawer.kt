@@ -1,5 +1,7 @@
 package com.android.andex.ui
 
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.TextRange
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.fadeIn
@@ -135,6 +137,10 @@ fun AndexConversationDrawer(
         searchExpanded = false
         searchQuery = ""
     }
+    val drawerVisible = LocalDrawerVisible.current
+    LaunchedEffect(drawerVisible) {
+        if (!drawerVisible) dismissSearch()
+    }
     val drawerBackground = if (permanent) AndexBackground else AndexSidebarBackground
 
     ModalDrawerSheet(
@@ -214,61 +220,27 @@ fun AndexConversationDrawer(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp)
-                        .padding(top = 18.dp)
+                        .padding(horizontal = 20.dp)
+                        .padding(top = 12.dp)
                         .statusBarsPadding(),
                 ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
+                    DrawerSearchHeader(
+                        title = "Andex", expanded = searchExpanded, query = searchQuery,
+                        onExpandedChange = { if (it) searchExpanded = true else dismissSearch() },
+                        onQueryChange = { searchQuery = it },
                     ) {
-                        Text(
-                            text = "Andex",
-                            style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Normal),
-                            color = AndexOnSurface,
-                            modifier = Modifier.weight(1f).padding(start = 6.dp),
+                        HeaderCircleButton(
+                            icon = LucideIcons.Settings, contentDescription = stringResource(Res.string.settings_title),
+                            onClick = { dismissSearch(); onSettingsSelected() }, size = 38.dp, iconSize = 19.dp,
+                            containerColor = Color.Transparent, showHalo = false,
                         )
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            HeaderCircleButton(
-                                icon = LucideIcons.Search,
-                                contentDescription = stringResource(Res.string.common_search),
-                                onClick = {
-                                    if (searchExpanded || searchQuery.isNotBlank()) dismissSearch()
-                                    else searchExpanded = true
-                                },
-                                size = 42.dp,
-                                containerColor = Color.Transparent,
-                                showHalo = false,
-                            )
-                            HeaderCircleButton(
-                                icon = LucideIcons.Settings,
-                                contentDescription = stringResource(Res.string.settings_title),
-                                onClick = {
-                                    dismissSearch()
-                                    onSettingsSelected()
-                                },
-                                size = 42.dp,
-                                containerColor = Color.Transparent,
-                                showHalo = false,
-                            )
-                            if (onToggleTheme != null) HeaderCircleButton(
-                                icon = if (com.android.andex.ui.theme.themeForeground(AndexBackground) == Color.White) LucideIcons.Sun else LucideIcons.Moon,
-                                contentDescription = "切换深色/浅色模式",
-                                onClick = onToggleTheme,
-                                size = 42.dp,
-                                containerColor = Color.Transparent,
-                                showHalo = false,
-                            )
-                        }
+                        if (onToggleTheme != null) HeaderCircleButton(
+                            icon = if (AndexBackground == Color.Black) LucideIcons.Sun else LucideIcons.Moon,
+                            contentDescription = "切换深色/浅色模式", onClick = onToggleTheme,
+                            size = 38.dp, iconSize = 19.dp, containerColor = Color.Transparent, showHalo = false,
+                        )
                     }
-                    AnimatedVisibility(visible = searchExpanded || searchQuery.isNotBlank()) {
-                        Column {
-                            Spacer(modifier = Modifier.height(16.dp))
-                            SharedDrawerSearchField(searchQuery) { searchQuery = it }
-                        }
-                    }
-                    Spacer(modifier = Modifier.height(if (searchExpanded || searchQuery.isNotBlank()) 10.dp else 12.dp))
+                    Spacer(Modifier.height(12.dp))
                 }
                 Column(
                     modifier = Modifier
@@ -325,13 +297,24 @@ fun AndexConversationDrawer(
 }
 
 @Composable
-internal fun SharedDrawerSearchField(value: String, onValueChange: (String) -> Unit) {
+internal fun SharedDrawerSearchField(value: String, onValueChange: (String) -> Unit, onClose: (() -> Unit)? = null) {
+    val focus = remember { FocusRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
+    var initiallyFocused by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        if (!initiallyFocused) {
+            initiallyFocused = true
+            focus.requestFocus()
+            keyboard?.show()
+        }
+    }
     Row(
         modifier = Modifier
             .shadow(12.dp, RoundedCornerShape(24.dp), ambientColor = AndexScrim, spotColor = AndexScrim)
             .clip(RoundedCornerShape(24.dp))
-            .background(AndexSurface)
-            .padding(horizontal = 14.dp, vertical = 11.dp),
+            .andexGlass(RoundedCornerShape(24.dp))
+            .fillMaxWidth().height(38.dp)
+            .padding(horizontal = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
@@ -350,9 +333,14 @@ internal fun SharedDrawerSearchField(value: String, onValueChange: (String) -> U
                 singleLine = true,
                 textStyle = MaterialTheme.typography.bodyMedium.copy(color = AndexOnSurface),
                 cursorBrush = SolidColor(AndexOnSurface),
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().focusRequester(focus),
             )
         }
+        if (onClose != null) HeaderCircleButton(
+            icon = LucideIcons.X, contentDescription = "收起搜索",
+            onClick = { keyboard?.hide(); onClose() }, size = 30.dp,
+            containerColor = Color.Transparent, showHalo = false,
+        )
     }
 }
 
@@ -372,13 +360,13 @@ private fun SharedDrawerSessionRow(
     var renameFieldHadFocus by remember { mutableStateOf(false) }
     var renameFocusRequest by remember { mutableIntStateOf(0) }
     var titleValue by remember(session.id, session.title, newChatTitle) {
-        mutableStateOf(session.title.ifBlank { newChatTitle })
+        mutableStateOf(session.title.ifBlank { newChatTitle }.let { TextFieldValue(it, TextRange(it.length)) })
     }
     val focusRequester = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
 
     fun commitRename() {
-        titleValue.trim().takeIf { it.isNotBlank() && it != session.title }?.let(onRename)
+        titleValue.text.trim().takeIf { it.isNotBlank() && it != session.title }?.let(onRename)
         isRenaming = false
         keyboard?.hide()
     }
@@ -464,7 +452,7 @@ private fun SharedDrawerSessionRow(
             onDismiss = { menuExpanded = false },
             onRename = {
                 menuExpanded = false
-                titleValue = session.title.ifBlank { newChatTitle }
+                titleValue = session.title.ifBlank { newChatTitle }.let { TextFieldValue(it, TextRange(it.length)) }
                 renameFieldHadFocus = false
                 isRenaming = true
                 renameFocusRequest += 1

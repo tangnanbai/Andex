@@ -84,6 +84,7 @@ class PhoneControlController(
             .put("default_backend", "termux").put("termux_ready", bashTool.embeddedRuntime.isInstalled)
             .put("adb_ready", adbReady).put("adb_endpoint", preferences.adbEndpoint)
             .put("accessibility_ready", PhoneAccessibilityService.instance != null)
+            .put("accessibility_authorized", phoneAccessibilityEnabled(context) == true)
             .put("app_package", context.packageName).put("app_uid", android.os.Process.myUid())
             .put("termux_identity", "ordinary Andex app UID; launch uses native Android bridge")
     }

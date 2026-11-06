@@ -54,6 +54,12 @@ class AndexSettingsStore(
 ) {
     suspend fun load(): SharedPersistedSettings {
         repairBuiltInSkillSelectionDefaults()
+        dataStore.edit { preferences ->
+            preferences[AppSettingsJson]?.let { raw ->
+                val normalized = clearLegacyVoiceConfiguration(raw)
+                if (raw != normalized) preferences[AppSettingsJson] = normalized
+            }
+        }
         val preferences = dataStore.data.first()
         val defaults = AppSettings()
         // The first launch follows the platform language once, then keeps the

@@ -18,6 +18,17 @@ import java.nio.ByteOrder
 import kotlinx.coroutines.*
 
 @Composable
+actual fun ObserveVoiceInputInterruptions(onInterrupted: () -> Unit) {
+    val current by rememberUpdatedState(onInterrupted)
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    DisposableEffect(lifecycle) {
+        val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_STOP) current() }
+        lifecycle.addObserver(observer)
+        onDispose { lifecycle.removeObserver(observer) }
+    }
+}
+
+@Composable
 actual fun rememberVoiceRecorder(): VoiceRecorder {
     val context = LocalContext.current
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
@@ -48,7 +59,7 @@ private class AndroidVoiceRecorder(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     @Suppress("MissingPermission")
-    override fun start(): Boolean {
+    override fun start(onPcm: ((ByteArray) -> Unit)?): Boolean {
         if (!hasPermission()) { requestPermission(); return false }
         cancel()
         val min = AudioRecord.getMinBufferSize(16000, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
@@ -68,7 +79,10 @@ private class AndroidVoiceRecorder(
             while (active.get() && output.size() < 16000 * 2 * 60) {
                 val read = audio.read(chunk, 0, chunk.size)
                 if (read < 0) error("麦克风录音中断，请重试。")
-                if (read > 0) output.write(chunk, 0, read)
+                if (read > 0) {
+                    output.write(chunk, 0, read)
+                    onPcm?.invoke(chunk.copyOf(read))
+                }
             }
             output.toByteArray()
         }

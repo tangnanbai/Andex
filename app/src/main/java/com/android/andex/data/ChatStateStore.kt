@@ -340,7 +340,6 @@ class ChatStateStore(
     ): PersistedChatWriteIntent = when {
         pendingIntent == null -> writeIntent
         writeIntent == PersistedChatWriteIntent.SyncSnapshot &&
-            updated.sessions.isEmpty() &&
             (pendingIntent == PersistedChatWriteIntent.DeleteSession ||
                 pendingIntent == PersistedChatWriteIntent.ReplaceFromImport) -> pendingIntent
         else -> writeIntent

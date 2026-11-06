@@ -45,6 +45,8 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntSize
@@ -67,7 +69,7 @@ private val TimelineBarHeight = 3.dp
 private val TimelineBarGap = 8.dp
 private val TimelineVerticalPadding = 10.dp
 private val TimelineCompactTouchHeight = 56.dp
-private val TimelineMovementThreshold = 18.dp
+private val TimelineMovementThreshold = 8.dp
 private val TimelineExitTolerance = 28.dp
 
 @Composable
@@ -84,12 +86,11 @@ fun ConversationTimeline(
     val isDarkTheme = MaterialTheme.colorScheme.background.luminance() < 0.5f
     val latestOnNavigate by rememberUpdatedState(onNavigate)
     val safeCurrentIndex = currentIndex.coerceIn(entries.indices)
+    val latestCurrentIndex by rememberUpdatedState(safeCurrentIndex)
     var navigating by remember(entries) { mutableStateOf(false) }
     var selectedIndex by remember(entries) { mutableIntStateOf(safeCurrentIndex) }
     var dragDistancePx by remember { mutableFloatStateOf(0f) }
     var dragOffset by remember { mutableStateOf(Offset.Zero) }
-    var finalPointer by remember { mutableStateOf<Offset?>(null) }
-    var railSize by remember { mutableStateOf(IntSize.Zero) }
 
     LaunchedEffect(safeCurrentIndex, navigating) {
         if (!navigating) selectedIndex = safeCurrentIndex
@@ -156,68 +157,6 @@ fun ConversationTimeline(
                 .align(Alignment.BottomEnd)
                 .width(TimelineRailWidth)
                 .height(animatedRailHeight)
-                .onSizeChanged { railSize = it }
-                .pointerInput(entries.size, safeCurrentIndex) {
-                    awaitEachGesture {
-                        val down = awaitFirstDown(requireUnconsumed = false)
-                        down.consume()
-                        navigating = true
-                        selectedIndex = safeCurrentIndex
-                        dragDistancePx = 0f
-                        dragOffset = Offset.Zero
-                        finalPointer = down.position
-                        var pointerInRoot = Offset(
-                            x = down.position.x,
-                            y = down.position.y + constraints.maxHeight - railSize.height,
-                        )
-
-                        val pointerId = down.id
-                        var cancelled = false
-                        var pressed = true
-                        while (pressed) {
-                            val event = awaitPointerEvent()
-                            val change = event.changes.firstOrNull { it.id == pointerId }
-                            if (change == null) {
-                                cancelled = true
-                                break
-                            }
-                            val nextPointerInRoot = Offset(
-                                x = change.position.x,
-                                y = change.position.y + constraints.maxHeight - railSize.height,
-                            )
-                            val dragAmount = nextPointerInRoot - pointerInRoot
-                            pointerInRoot = nextPointerInRoot
-                            dragOffset += dragAmount
-                            dragDistancePx = maxOf(dragDistancePx, dragOffset.getDistance())
-                            finalPointer = change.position
-                            if (dragDistancePx >= movementThresholdPx && railSize.height > 0) {
-                                selectedIndex = timelineIndexForPosition(
-                                    positionY = change.position.y,
-                                    height = railSize.height.toFloat(),
-                                    count = entries.size,
-                                    verticalPadding = verticalPaddingPx,
-                                    barHeight = barHeightPx,
-                                )
-                            }
-                            pressed = change.pressed
-                            change.consume()
-                        }
-
-                        val pointer = finalPointer
-                        val stayedNearRail = pointer != null &&
-                            pointer.x >= -exitTolerancePx &&
-                            pointer.x <= railSize.width + exitTolerancePx &&
-                            pointer.y >= -exitTolerancePx &&
-                            pointer.y <= railSize.height + exitTolerancePx
-                        val shouldNavigate = !cancelled &&
-                            dragDistancePx >= movementThresholdPx &&
-                            stayedNearRail
-                        val destination = selectedIndex
-                        navigating = false
-                        selectedIndex = safeCurrentIndex
-                        if (shouldNavigate) latestOnNavigate(destination)
-                    }
-                },
         ) {
             val compactCount = entries.size.coerceAtMost(4)
             val compactTop = size.height - with(density) {
@@ -230,43 +169,81 @@ fun ConversationTimeline(
             val compactStep = barHeightPx + with(density) { TimelineBarGap.toPx() }
             val navigationTop = verticalPaddingPx
             val navigationSpace = (size.height - verticalPaddingPx * 2 - barHeightPx).coerceAtLeast(0f)
-            val navigationStep = if (entries.size > 1) {
-                navigationSpace / (entries.size - 1)
-            } else {
-                0f
-            }
+            val navigationStep = navigationSpace / (entries.size - 1)
             val endX = size.width - with(density) { 11.dp.toPx() }
 
             entries.indices.forEach { index ->
                 val collapsedSlot = index - compactWindowPosition.value
                 val collapsedY = compactTop + collapsedSlot * compactStep + barHeightPx / 2f
                 val expandedY = navigationTop + index * navigationStep + barHeightPx / 2f
-                val y = lerp(
-                    Offset(0f, collapsedY),
-                    Offset(0f, expandedY),
-                    expansionFraction,
-                ).y
+                val y = lerp(Offset(0f, collapsedY), Offset(0f, expandedY), expansionFraction).y
                 val distance = abs(index - selectionPosition.value)
                 val compactWidth = compactTimelineBarWidth(distance)
                 val navigationWidth = navigationTimelineBarWidth(distance)
                 val widthPx = with(density) {
                     (compactWidth + (navigationWidth - compactWidth) * expansionFraction).dp.toPx()
                 }
-                val compactColor = compactTimelineBarColor(distance)
-                val navigationColor = navigationTimelineBarColor(distance, isDarkTheme)
-                val color = lerp(compactColor, navigationColor, expansionFraction)
+                val color = lerp(compactTimelineBarColor(distance), navigationTimelineBarColor(distance, isDarkTheme), expansionFraction)
                 val collapsedAlpha = compactTimelineSlotAlpha(collapsedSlot, compactCount)
                 val alpha = collapsedAlpha + (1f - collapsedAlpha) * expansionFraction
-
-                drawLine(
-                    color = color.copy(alpha = color.alpha * alpha),
-                    start = Offset(endX - widthPx, y),
-                    end = Offset(endX, y),
-                    strokeWidth = barHeightPx,
-                    cap = StrokeCap.Round,
-                )
+                drawLine(color.copy(alpha = color.alpha * alpha), Offset(endX - widthPx, y), Offset(endX, y),
+                    strokeWidth = barHeightPx, cap = StrokeCap.Round)
             }
         }
+
+        // Keep the input origin fixed while the visual rail expands. Pointer capture
+        // continues beyond this compact hit area until UP, including past the bottom.
+        val fullRailHeightPx = with(density) { navigationHeight.toPx() }
+        val compactHeight = TimelineCompactTouchHeight.coerceAtMost(maxHeight)
+        val compactHeightPx = with(density) { compactHeight.toPx() }
+        Box(Modifier.align(Alignment.BottomEnd).width(TimelineRailWidth).height(compactHeight)
+            .semantics { contentDescription = "按住滑动切换话题" }
+            .pointerInput(entries.size, fullRailHeightPx) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        down.consume()
+                        navigating = true
+                        selectedIndex = latestCurrentIndex
+                        dragDistancePx = 0f
+                        dragOffset = Offset.Zero
+                        var finalPointer = down.position
+                        val pointerId = down.id
+                        var cancelled = false
+                        var pressed = true
+                        try {
+                        while (pressed) {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull { it.id == pointerId }
+                            if (change == null) {
+                                cancelled = true
+                                break
+                            }
+                            dragOffset = change.position - down.position
+                            dragDistancePx = maxOf(dragDistancePx, dragOffset.getDistance())
+                            finalPointer = change.position
+                            if (dragDistancePx >= movementThresholdPx) {
+                                selectedIndex = timelineIndexForPosition(
+                                    positionY = change.position.y + fullRailHeightPx - compactHeightPx,
+                                    height = fullRailHeightPx,
+                                    count = entries.size,
+                                    verticalPadding = verticalPaddingPx,
+                                    barHeight = barHeightPx,
+                                )
+                            }
+                            pressed = change.pressed
+                            change.consume()
+                        }
+
+                        val shouldNavigate = timelineGestureCommits(cancelled, dragDistancePx, movementThresholdPx,
+                            finalPointer.x, size.width.toFloat(), exitTolerancePx)
+                        val destination = selectedIndex
+                        if (shouldNavigate) latestOnNavigate(destination)
+                        } finally {
+                            navigating = false
+                            selectedIndex = latestCurrentIndex
+                        }
+                    }
+                })
 
         val previewHeight = 168.dp
         val previewHeightPx = with(density) { previewHeight.toPx() }
@@ -301,6 +278,8 @@ fun ConversationTimeline(
                 modifier = Modifier
                     .width(maxWidth.minus(TimelineRailWidth + 20.dp).coerceAtMost(300.dp))
                     .height(previewHeight)
+                    .andexGlass(androidx.compose.foundation.shape.RoundedCornerShape(20.dp), popup = true)
+                    .padding(horizontal = 12.dp)
                     .clipToBounds(),
             ) {
                 // Only nearby labels are composed; the continuous selection animates
@@ -332,6 +311,10 @@ fun ConversationTimeline(
         }
     }
 }
+
+internal fun timelineGestureCommits(cancelled: Boolean, distance: Float, threshold: Float,
+    x: Float, width: Float, tolerance: Float): Boolean =
+    !cancelled && distance >= threshold && x >= -tolerance && x <= width + tolerance
 
 internal fun compactTimelineIndices(total: Int, currentIndex: Int): List<Int> {
     if (total <= 0) return emptyList()

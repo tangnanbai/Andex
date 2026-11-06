@@ -20,6 +20,10 @@ data class WorkTraceTask(
     val running: Boolean get() = steps.any { it.running }
 }
 
+internal fun workTraceStepPreview(step: WorkTraceStep): String =
+    (step.command?.takeIf { it.isNotBlank() } ?: step.detail)
+        .lineSequence().map(String::trim).firstOrNull { it.isNotBlank() }.orEmpty().take(240)
+
 /** User messages delimit requests; subsequent replies and tools stay with that request. */
 internal fun groupWorkTraceSteps(steps: List<WorkTraceStep>): List<WorkTraceTask> {
     val groups = mutableListOf<WorkTraceTask>()
@@ -57,4 +61,8 @@ fun workTraceToolLabel(name: String, running: Boolean): String = when (name.lowe
     "tavily_search", "web_search" -> if (running) "正在搜索网页" else "已搜索网页"
     "phone_control" -> if (running) "正在操作手机" else "已调用手机控制"
     else -> if (running) "$name · 运行中" else name
+}
+internal fun workTraceLatestRowIndex(tasks: List<WorkTraceTask>, expanded: (WorkTraceTask) -> Boolean): Int {
+    if (tasks.isEmpty()) return 0
+    return (tasks.sumOf { 1 + if (expanded(it)) it.steps.size else 0 } - 1).coerceAtLeast(0)
 }

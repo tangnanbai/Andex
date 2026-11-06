@@ -1,4 +1,6 @@
 package com.android.andex.ui
+import androidx.compose.foundation.layout.heightIn
+import com.android.andex.ui.theme.AndexBackground
 
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
@@ -425,8 +427,8 @@ fun SettingsScreen(
     themeMode: AppThemeMode,
     themeAccent: String,
     themeBackground: String,
-    voiceSettings: com.android.andex.data.VolcAsrSettings,
-    onUpdateAppearance: (String, String, com.android.andex.data.VolcAsrSettings) -> Unit,
+    voiceSettings: com.android.andex.data.VoiceInputSettings,
+    onUpdateAppearance: (String, String, com.android.andex.data.VoiceInputSettings) -> Unit,
     defaultChatModelKey: String,
     defaultTitleModelKey: String,
     defaultNamingModelKey: String,
@@ -2269,8 +2271,8 @@ private fun GeneralSettingsPage(
 
 @Composable
 private fun GeneralSettingsPageV2(
-    accent: String, background: String, voice: com.android.andex.data.VolcAsrSettings,
-    onAppearance: (String, String, com.android.andex.data.VolcAsrSettings) -> Unit,
+    accent: String, background: String, voice: com.android.andex.data.VoiceInputSettings,
+    onAppearance: (String, String, com.android.andex.data.VoiceInputSettings) -> Unit,
     selectedLanguage: AppLanguage,
     onLanguageSelected: (AppLanguage) -> Unit,
     selectedThemeMode: AppThemeMode,
@@ -2297,7 +2299,7 @@ private fun GeneralSettingsPageV2(
 
         HorizontalDivider(color = AndexOutlineSoft, modifier = Modifier.padding(horizontal = 16.dp, vertical = 16.dp))
         Column(Modifier.fillMaxWidth()) {
-            GeneralAppearanceSettings(accent, background, { a, b -> onAppearance(a, b, voice) }, voice, { onAppearance(accent, background, it) })
+            GeneralAppearanceSettings(accent, background, { a, b -> onAppearance(a, b, voice) }, voice, { onAppearance(accent, if (AndexBackground == androidx.compose.ui.graphics.Color.Black) "black" else background, it) })
         }
 
     }
@@ -3361,6 +3363,16 @@ private fun AndexExtensionControlRow(
             }
         }
         "result-card", "callout" -> {
+            if (setting.has("expanded") || setting.optString("editAction").isNotBlank()) {
+                EditableMemoryCard(id, setting.optString("title").ifBlank { label }, setting.optString("text"),
+                    onSave = setting.optString("editAction").takeIf(String::isNotBlank)?.let { editAction ->
+                        { content, previous -> controller?.onAction?.invoke(page.extensionId, editAction,
+                            JSONObject().put("content", content).put("previous", previous)); Unit }
+                    }, onDelete = setting.optString("deleteAction").takeIf(String::isNotBlank)?.let { deleteAction ->
+                        { controller?.onAction?.invoke(page.extensionId, deleteAction, JSONObject()); Unit }
+                    })
+                return
+            }
             val value = setting.optString("text").ifBlank { setting.optString("value").ifBlank { label } }
             val title = setting.optString("title")
             Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
@@ -3368,7 +3380,11 @@ private fun AndexExtensionControlRow(
                     Text(title, style = MaterialTheme.typography.labelMedium, color = AndexOnSurface)
                     Spacer(Modifier.height(4.dp))
                 }
-                Text(value, style = MaterialTheme.typography.bodySmall, color = AndexOnSurfaceVariant)
+                androidx.compose.foundation.text.selection.SelectionContainer {
+                    Text(value, style = MaterialTheme.typography.bodySmall, color = AndexOnSurfaceVariant,
+                        modifier = if (setting.optBoolean("scrollable"))
+                            Modifier.fillMaxWidth().heightIn(max = 260.dp).verticalScroll(rememberScrollState()) else Modifier)
+                }
             }
         }
         "divider" -> CardDivider()
@@ -6835,7 +6851,7 @@ private fun AboutPage(
         appUpdate.availableRelease != null -> stringResource(R.string.settings_update_available, appUpdate.availableRelease.versionName)
         else -> stringResource(R.string.settings_update_check_newer_apk)
     }
-    val releaseLabel = stringResource(R.string.settings_release_summary, BuildConfig.VERSION_NAME)
+    val releaseLabel = BuildConfig.VERSION_NAME
     SubPageScaffold(title = title, onBack = onBack) {
         Column(
             modifier = Modifier
@@ -6854,12 +6870,6 @@ private fun AboutPage(
                 style = MaterialTheme.typography.titleLarge,
                 color = AndexOnSurface,
             )
-            Spacer(Modifier.height(4.dp))
-            Text(
-                text = releaseLabel,
-                style = MaterialTheme.typography.bodyMedium,
-                color = AndexOnSurfaceVariant,
-            )
         }
 
         Spacer(Modifier.height(24.dp))
@@ -6874,13 +6884,6 @@ private fun AboutPage(
                 title = stringResource(R.string.settings_check_for_updates),
                 subtitle = updateSubtitle,
                 onClick = onCheckForUpdates,
-            )
-            CardDivider()
-            SettingsNavRow(
-                icon = Icons.Rounded.Link,
-                title = stringResource(R.string.settings_website),
-                subtitle = "",
-                onClick = onOpenWebsite,
             )
             CardDivider()
             SettingsNavRow(

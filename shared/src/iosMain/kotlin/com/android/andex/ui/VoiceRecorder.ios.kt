@@ -7,6 +7,15 @@ import platform.AVFAudio.*
 import platform.AudioToolbox.kAudioFormatLinearPCM
 import platform.Foundation.*
 import platform.posix.memcpy
+import com.android.andex.platform.SharedApplicationLifecycle
+
+@Composable
+actual fun ObserveVoiceInputInterruptions(onInterrupted: () -> Unit) {
+    val current by rememberUpdatedState(onInterrupted)
+    LaunchedEffect(Unit) {
+        SharedApplicationLifecycle.backgrounded.collect { background -> if (background) current() }
+    }
+}
 
 @Composable
 actual fun rememberVoiceRecorder(): VoiceRecorder {
@@ -16,15 +25,20 @@ actual fun rememberVoiceRecorder(): VoiceRecorder {
 }
 
 private class IosVoiceRecorder : VoiceRecorder {
+    private var streaming = false
     private var audio: AVAudioRecorder? = null
     private var url: NSURL? = null
-    override fun start(): Boolean {
+    override fun start(onPcm: ((ByteArray) -> Unit)?): Boolean {
         val session = AVAudioSession.sharedInstance()
         if (session.recordPermission != AVAudioSessionRecordPermissionGranted) {
             session.requestRecordPermission { }
             return false
         }
         cancel()
+        if (onPcm != null) {
+            streaming = com.android.andex.data.IosOnlineVoiceBindings.beginRecording(onPcm)
+            return streaming
+        }
         session.setCategory(AVAudioSessionCategoryRecord, error = null)
         session.setActive(true, error = null)
         val file = NSURL.fileURLWithPath(NSTemporaryDirectory() + "andex-voice-${NSUUID().UUIDString}.wav")
@@ -42,6 +56,11 @@ private class IosVoiceRecorder : VoiceRecorder {
         return true
     }
     override suspend fun stop(): ByteArray {
+        if (streaming) {
+            com.android.andex.data.IosOnlineVoiceBindings.finishRecording()
+            streaming = false
+            return ByteArray(0)
+        }
         val recorder = audio ?: error("录音已中断，请重试。")
         recorder.stop()
         val data = url?.let { NSData.dataWithContentsOfURL(it) } ?: error("无法读取录音。")
@@ -52,6 +71,8 @@ private class IosVoiceRecorder : VoiceRecorder {
         }
     }
     override fun cancel() {
+        if (streaming) com.android.andex.data.IosOnlineVoiceBindings.cancelRecording()
+        streaming = false
         audio?.stop(); audio = null
         url?.let { NSFileManager.defaultManager.removeItemAtURL(it, error = null) }; url = null
         AVAudioSession.sharedInstance().setActive(false, error = null)

@@ -94,6 +94,7 @@ import com.android.andex.data.normalizeReasoningEffort
 
 
 
+import com.android.andex.data.withAppearanceColors
 import com.android.andex.data.AppThemeMode
 
 
@@ -10144,11 +10145,11 @@ class AndexViewModel(
 
 
 
-    fun updateAppearance(accent: String, background: String, voice: com.android.andex.data.VolcAsrSettings) {
+    fun updateAppearance(accent: String, background: String, voice: com.android.andex.data.VoiceInputSettings) {
 
 
 
-        _uiState.update { it.copy(settings = it.settings.copy(themeAccent = accent, themeBackground = background, voiceInput = voice)) }
+        _uiState.update { it.copy(settings = it.settings.withAppearanceColors(accent, background).copy(voiceInput = voice)) }
 
 
 
@@ -15071,6 +15072,9 @@ class AndexViewModel(
 
 
 
+
+        "app.importMarkdown" -> com.android.andex.MemoryDocumentActivity.open(getApplication(), export = false)
+        "app.exportMarkdown" -> com.android.andex.MemoryDocumentActivity.open(getApplication(), export = true, text = args.optString("text"))
 
         "app.notify" -> {
 

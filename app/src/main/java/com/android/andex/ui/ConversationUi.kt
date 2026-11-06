@@ -979,6 +979,7 @@ private fun ConversationTopBar(
         onNewChat = onNewChat,
     ) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
         ConversationModelSelector(
             options = modelOptions,
             modelCatalogInfo = modelCatalogInfo,
@@ -989,9 +990,10 @@ private fun ConversationTopBar(
             onSelected = onModelSelected,
             onOpened = onModelSelectorOpened,
             onReasoningEffortSelected = onReasoningEffortSelected,
-            modifier = Modifier.weight(1f),
+            modifier = Modifier.weight(1f, fill = false),
         )
         if (modelStatus.isNotBlank()) ConversationUsageCapsule(modelStatus)
+        }
         roleSelector()
         }
     }
@@ -1055,7 +1057,7 @@ private fun ConversationModelSelector(
         contentAlignment = Alignment.CenterStart,
     ) {
         ConversationCapsule(
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier.width(conversationModelLabelWidth(selectedModelName, selectedDisplay?.icon != null))
                 .onGloballyPositioned { coordinates ->
                     val bounds = coordinates.boundsInWindow()
                     anchorHeightPx = bounds.height.toInt()
@@ -1072,9 +1074,9 @@ private fun ConversationModelSelector(
                 }
             },
         ) {
-            Column(Modifier.fillMaxWidth()) {
-                if (selectedDisplay != null) SelectedModelDisplay(selectedDisplay, Modifier.fillMaxWidth())
-                else Text(fallbackLabel, Modifier.fillMaxWidth(),
+            Column {
+                if (selectedDisplay != null) SelectedModelDisplay(selectedDisplay)
+                else Text(fallbackLabel,
                     style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Normal),
                     color = AndexOnSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
@@ -2291,8 +2293,10 @@ private fun ConversationComposerOverlay(
     onSteerFollowUp: () -> Unit,
 ) {
     val density = LocalDensity.current
-    val imeVisible = WindowInsets.ime.getBottom(density) > 0
-    val bottomLift = if (imeVisible) 12.dp else 18.dp
+    val imeVisible = LocalConversationImeEnabled.current && WindowInsets.ime.getBottom(density) > 0
+    // The IME already animates the inset. A visibility-based extra offset jumps
+    // when its last frame reaches zero and makes the composer flash.
+    val bottomLift = 18.dp
     Box(
         modifier = modifier
             .fillMaxWidth()
@@ -2418,7 +2422,7 @@ private fun ConversationComposerBar(
     var measuredTextHeight by remember { mutableStateOf(22.dp) }
     val density = LocalDensity.current
     val view = LocalView.current
-    val imeVisible = WindowInsets.ime.getBottom(density) > 0
+    val imeVisible = LocalConversationImeEnabled.current && WindowInsets.ime.getBottom(density) > 0
     val selectedSkillSet = remember(selectedSkillIds) { selectedSkillIds.toSet() }
     val selectedMcpServerSet = remember(selectedMcpServerIds) { selectedMcpServerIds.toSet() }
     val selectedSkillActions = remember(availableSkills, selectedSkillSet) {

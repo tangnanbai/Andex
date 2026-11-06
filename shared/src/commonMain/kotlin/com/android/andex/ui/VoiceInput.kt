@@ -1,13 +1,8 @@
 package com.android.andex.ui
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -17,23 +12,15 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.IntOffset
-import androidx.compose.ui.unit.IntRect
-import androidx.compose.ui.unit.IntSize
-import androidx.compose.ui.unit.LayoutDirection
-import androidx.compose.ui.window.Popup
-import androidx.compose.ui.window.PopupPositionProvider
-import androidx.compose.ui.window.PopupProperties
-import com.android.andex.data.VolcAsrClient
-import com.android.andex.data.VolcAsrSettings
+import com.android.andex.data.VoiceInputSettings
+import com.android.andex.data.rememberDoubaoImeAsr
 import com.android.andex.ui.theme.*
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeout
 
 interface VoiceRecorder {
     /** Requests permission when needed. Caller should ask the user to hold again after granting. */
-    fun start(): Boolean
+    fun start(onPcm: ((ByteArray) -> Unit)? = null): Boolean
     suspend fun stop(): ByteArray
     fun cancel()
 }
@@ -41,7 +28,10 @@ interface VoiceRecorder {
 @Composable
 expect fun rememberVoiceRecorder(): VoiceRecorder
 
-val LocalVoiceInputSettings = staticCompositionLocalOf { VolcAsrSettings() }
+@Composable
+expect fun ObserveVoiceInputInterruptions(onInterrupted: () -> Unit)
+
+val LocalVoiceInputSettings = staticCompositionLocalOf { VoiceInputSettings() }
 
 /** Observes the initial pointer pass so a configured hold can take over text selection. */
 @Composable
@@ -54,28 +44,58 @@ fun VoiceInputField(
     val focusRequester = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
     val keyboardOpen by rememberUpdatedState(WindowInsets.ime.getBottom(LocalDensity.current) > 0)
-    val recorder = rememberVoiceRecorder()
+    val microphone = rememberVoiceRecorder()
     val scope = rememberCoroutineScope()
-    val client = remember { VolcAsrClient() }
-    val recognize by rememberUpdatedState(onRecognized)
-    var recording by remember { mutableStateOf(false) }
-    var recognizing by remember { mutableStateOf(false) }
-    var notice by remember { mutableStateOf<String?>(null) }
-    DisposableEffect(recorder) {
-        onDispose { recorder.cancel(); client.close() }
+    var levels by remember { mutableStateOf(List(48) { 0f }) }
+    val feedback = LocalVoiceFeedback.current
+    val recorder = remember(microphone, scope) {
+        object : VoiceRecorder by microphone {
+            override fun start(onPcm: ((ByteArray) -> Unit)?): Boolean {
+                levels = List(48) { 0f }
+                return microphone.start { bytes ->
+                    var peak = 0
+                    for (i in 0 until bytes.size - 1 step 2) {
+                        val sample = ((bytes[i].toInt() and 255) or (bytes[i + 1].toInt() shl 8)).toShort().toInt()
+                        peak = maxOf(peak, kotlin.math.abs(sample))
+                    }
+                    val amplitude = (peak / 10000f).coerceIn(0f, 1f)
+                    scope.launch { levels = levels.drop(1) + amplitude }
+                    onPcm?.invoke(bytes)
+                }
+            }
+        }
     }
-    LaunchedEffect(notice) {
-        if (notice != null && !recording && !recognizing) {
-            kotlinx.coroutines.delay(6000)
+    val doubao = rememberDoubaoImeAsr()
+    val recognize by rememberUpdatedState(onRecognized)
+    var phase by remember { mutableStateOf(VoicePhase.Idle) }
+    var notice by remember { mutableStateOf<String?>(null) }
+    var cancelArmed by remember { mutableStateOf(false) }
+    val voice = remember(recorder, doubao, scope) {
+        StreamingVoiceSession(scope, recorder, { pcm, preview -> doubao.transcribe(pcm, preview) },
+            { state, text -> phase = state; notice = text }, { recognize(it) })
+    }
+    ObserveVoiceInputInterruptions {
+        if (phase != VoicePhase.Idle) voice.cancel("录音已中断")
+    }
+    DisposableEffect(voice) {
+        onDispose { voice.cancel(null); doubao.close(); feedback?.overlay = null }
+    }
+    SideEffect {
+        feedback?.overlay = if (phase == VoicePhase.Idle) null else VoiceOverlayState(phase, notice, levels, cancelArmed)
+    }
+    LaunchedEffect(phase, notice) {
+        if (phase == VoicePhase.Idle && !notice.isNullOrBlank()) {
+            feedback?.toast = notice
             notice = null
         }
     }
-    Box(modifier.then(if (!settings.isConfigured) Modifier else Modifier.pointerInput(settings) {
+    Box(modifier
+        .then(if (!settings.isConfigured) Modifier else Modifier.pointerInput(settings) {
         awaitEachGesture {
             val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
             // Keyboard-open gestures belong entirely to the text field (paste/selection).
             // When closed, consume from DOWN so the field cannot focus during a voice hold.
-            if (keyboardOpen || recognizing) return@awaitEachGesture
+            if (keyboardOpen || phase != VoicePhase.Idle) return@awaitEachGesture
             down.consume()
             var held = down
             var shortTap = false
@@ -100,79 +120,33 @@ fun VoiceInputField(
             }
             var completed = false
             try {
-                if (!recorder.start()) {
-                    notice = "请允许麦克风权限，然后再次按住说话"
-                    return@awaitEachGesture
-                }
-                recording = true
-                notice = "正在聆听 · 松开识别，上滑取消"
-                val up = withTimeout(60_000) {
+                if (!voice.start()) { completed = true; return@awaitEachGesture }
+                cancelArmed = false
+                var cancelled = false
+                withTimeoutOrNull(60_000) {
                     var release: androidx.compose.ui.input.pointer.PointerInputChange? = null
                     while (release == null) {
                         val event = awaitPointerEvent(PointerEventPass.Initial)
-                        val change = event.changes.firstOrNull { it.id == held.id } ?: break
+                        if (voice.phase != VoicePhase.Listening) break
+                        val change = event.changes.firstOrNull { it.id == held.id }
+                        if (change == null) { cancelled = true; break }
                         change.consume()
-                        if (change.position.y < held.position.y - 64.dp.toPx()) break
-                        if (!change.pressed) release = change
+                        cancelArmed = change.position.y < held.position.y - 64.dp.toPx()
+                        if (!change.pressed) { cancelled = cancelArmed; release = change }
                     }
-                    release
                 }
-                if (up != null) {
+                if (voice.phase != VoicePhase.Listening) {
+                    // A network failure already supplied its error. Do not overwrite it on UP.
                     completed = true
-                    recognizing = true
-                    notice = "正在识别…"
-                    scope.launch {
-                        try {
-                            val audio = recorder.stop()
-                            recognize(client.transcribe(settings, audio))
-                            notice = null
-                        } catch (cancel: CancellationException) { throw cancel }
-                        catch (error: Exception) { notice = error.message ?: "语音识别失败，请重试" }
-                        finally { recognizing = false; recorder.cancel() }
-                    }
-                } else notice = "已取消录音"
+                } else if (!cancelled) { voice.finish(); completed = true }
             } catch (cancel: CancellationException) { throw cancel }
-            catch (error: Exception) { notice = error.message ?: "录音失败，请重试" }
+            catch (error: Exception) { voice.cancel(error.message ?: "录音失败，请重试"); completed = true }
             finally {
-                recording = false
-                if (!completed) recorder.cancel()
+                cancelArmed = false
+                if (!completed) voice.cancel()
             }
         }
     })) {
-        content(if (settings.isConfigured && !keyboardOpen) notice ?: "发消息或按住说话" else null, Modifier.focusRequester(focusRequester))
-        if (notice != null) {
-            val gap = with(LocalDensity.current) { 12.dp.roundToPx() }
-            val positionProvider = remember(gap) {
-                object : PopupPositionProvider {
-                    override fun calculatePosition(
-                        anchorBounds: IntRect,
-                        windowSize: IntSize,
-                        layoutDirection: LayoutDirection,
-                        popupContentSize: IntSize,
-                    ): IntOffset {
-                        val maxX = (windowSize.width - popupContentSize.width - gap).coerceAtLeast(gap)
-                        val maxY = (windowSize.height - popupContentSize.height - gap).coerceAtLeast(gap)
-                        return IntOffset(
-                            (anchorBounds.center.x - popupContentSize.width / 2).coerceIn(gap, maxX),
-                            (anchorBounds.top - popupContentSize.height - gap).coerceIn(gap, maxY),
-                        )
-                    }
-                }
-            }
-            Popup(
-                popupPositionProvider = positionProvider,
-                properties = PopupProperties(focusable = false),
-            ) {
-                Text(
-                    text = notice!!,
-                    modifier = Modifier.widthIn(max = 320.dp)
-                        .background(AndexSurfaceHigh, RoundedCornerShape(16.dp))
-                        .padding(horizontal = 16.dp, vertical = 12.dp),
-                    color = AndexOnSurface,
-                    style = MaterialTheme.typography.bodySmall,
-                    softWrap = true,
-                )
-            }
-        }
+        content(if (settings.isConfigured) "发消息或按住说话" else null, Modifier.focusRequester(focusRequester))
     }
 }

@@ -151,9 +151,10 @@ fun resolvedThemeColor(accent: String, darkTheme: Boolean): ThemeColorOption {
 
 /** Preserve installed two-color themes until either independent choice is changed. */
 fun resolvedBackgroundColor(background: String, accent: String, darkTheme: Boolean): ThemeColorOption {
-    ThemeColorOptions.firstOrNull { it.id == background }?.let { return it }
+    if (darkTheme) return ThemeColorOptions.first { it.id == "black" }
+    ThemeColorOptions.firstOrNull { it.id == background && it.id != "black" }?.let { return it }
     val legacy = ThemeAccentOptions.firstOrNull { it.id == accent }
-    val color = legacy?.secondary ?: if (darkTheme) Color.Black else Color.White
+    val color = legacy?.secondary?.takeUnless { it == Color.Black } ?: Color.White
     return ThemeColorOptions.first { it.color == color }
 }
 

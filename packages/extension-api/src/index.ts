@@ -113,6 +113,8 @@ export interface AndexSettingDefinition {
   details?: AndexSettingDetailItem[];
   resultText?: string;
   result?: string;
+  text?: string;
+  scrollable?: boolean;
   buttonLabel?: string;
   multiline?: boolean;
   secret?: boolean;

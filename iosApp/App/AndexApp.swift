@@ -3,6 +3,8 @@ import SwiftUI
 import UIKit
 import AndexShared
 import FileProvider
+import AVFAudio
+import Security
 
 extension Notification.Name {
     static let openAlpineFileManager = Notification.Name("Andex.OpenAlpineFileManager")
@@ -16,6 +18,7 @@ private final class AndexAppDelegate: NSObject, UIApplicationDelegate {
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
         IosAnalytics.shared.setListener(listener: AndexAnalytics.shared)
+        configureOnlineVoice()
         AndexRuntimeHost.shared.registerBackgroundExecution()
         let domain = NSFileProviderDomain(identifier: NSFileProviderDomainIdentifier("com.android.andex"), displayName: "Andex")
         NSFileProviderManager.add(domain) { error in
@@ -34,6 +37,123 @@ private final class AndexAppDelegate: NSObject, UIApplicationDelegate {
         internetPermissionRequester.requestAccess()
         return true
     }
+}
+
+private func voiceBytes(_ data: Data) -> KotlinByteArray {
+    let result = KotlinByteArray(size: Int32(data.count))
+    for (index, byte) in data.enumerated() { result.set(index: Int32(index), value: Int8(bitPattern: byte)) }
+    return result
+}
+
+private final class NativeOpusEncoder: NSObject, OpusPacketEncoder {
+    private let pcm = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 16000, channels: 1, interleaved: true)!
+    private var converter: AVAudioConverter?
+    private let opus = AVAudioFormat(settings: [
+        AVFormatIDKey: kAudioFormatOpus, AVSampleRateKey: 16000, AVNumberOfChannelsKey: 1
+    ])!
+    override init() {
+        super.init()
+        converter = AVAudioConverter(from: pcm, to: opus)
+        converter?.primeMethod = .none
+    }
+    func encode(pcm bytes: KotlinByteArray) -> KotlinByteArray {
+        guard bytes.size == 640, let converter,
+              let input = AVAudioPCMBuffer(pcmFormat: pcm, frameCapacity: 320),
+              let destination = input.int16ChannelData?[0] else { return voiceBytes(Data()) }
+        input.frameLength = 320
+        for index in 0..<320 {
+            let low = UInt16(UInt8(bitPattern: bytes.get(index: Int32(index * 2))))
+            let high = UInt16(UInt8(bitPattern: bytes.get(index: Int32(index * 2 + 1))))
+            destination[index] = Int16(bitPattern: low | (high << 8))
+        }
+        let output = AVAudioCompressedBuffer(format: opus, packetCapacity: 1, maximumPacketSize: 4000)
+        var supplied = false
+        var error: NSError?
+        let status = converter.convert(to: output, error: &error) { _, state in
+            if supplied { state.pointee = .noDataNow; return nil }
+            supplied = true; state.pointee = .haveData; return input
+        }
+        guard error == nil, status != .error, output.byteLength > 0 else { return voiceBytes(Data()) }
+        return voiceBytes(Data(bytes: output.data, count: Int(output.byteLength)))
+    }
+    func close() { converter?.reset(); converter = nil }
+}
+
+private final class NativeStreamingMicrophone {
+    static let shared = NativeStreamingMicrophone()
+    private var engine: AVAudioEngine?
+    func start(_ callback: @escaping (KotlinByteArray) -> Void) -> Bool {
+        stop()
+        let session = AVAudioSession.sharedInstance()
+        guard session.recordPermission == .granted else { session.requestRecordPermission { _ in }; return false }
+        do {
+            try session.setCategory(.record, mode: .measurement)
+            try session.setActive(true)
+            let engine = AVAudioEngine()
+            let source = engine.inputNode.outputFormat(forBus: 0)
+            guard let target = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 16000, channels: 1, interleaved: true),
+                  let converter = AVAudioConverter(from: source, to: target) else { return false }
+            engine.inputNode.installTap(onBus: 0, bufferSize: 2048, format: source) { buffer, _ in
+                let capacity = AVAudioFrameCount(Double(buffer.frameLength) * 16000 / source.sampleRate + 16)
+                guard let output = AVAudioPCMBuffer(pcmFormat: target, frameCapacity: capacity) else { return }
+                var supplied = false
+                var error: NSError?
+                let status = converter.convert(to: output, error: &error) { _, state in
+                    if supplied { state.pointee = .noDataNow; return nil }
+                    supplied = true; state.pointee = .haveData; return buffer
+                }
+                if error == nil, status != .error, output.frameLength > 0, let samples = output.int16ChannelData?[0] {
+                    callback(voiceBytes(Data(bytes: samples, count: Int(output.frameLength) * 2)))
+                }
+            }
+            self.engine = engine
+            try engine.start()
+            return true
+        } catch { stop(); return false }
+    }
+    func stop() {
+        engine?.inputNode.removeTap(onBus: 0); engine?.stop(); engine = nil
+        try? AVAudioSession.sharedInstance().setActive(false)
+    }
+}
+
+private func configureOnlineVoice() {
+    let bindings = IosOnlineVoiceBindings.shared
+    let key: [String: Any] = [
+        kSecClass as String: kSecClassGenericPassword,
+        kSecAttrService as String: "com.android.andex.doubao-ime",
+        kSecAttrAccount as String: "device"
+    ]
+    bindings.readCredentials = {
+        bindings.credentialStoreError = nil
+        var query = key; query[kSecReturnData as String] = true
+        var item: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        if status == errSecItemNotFound { return nil }
+        guard status == errSecSuccess, let data = item as? Data else {
+            bindings.credentialStoreError = "无法读取本机语音凭据，未重新注册设备。"
+            return nil
+        }
+        return String(data: data, encoding: .utf8)
+    }
+    bindings.writeCredentials = { text in
+        bindings.credentialStoreError = nil
+        let value = [kSecValueData as String: Data(text.utf8)]
+        var status = SecItemUpdate(key as CFDictionary, value as CFDictionary)
+        if status == errSecItemNotFound {
+            var entry = key; value.forEach { entry[$0] = $1 }
+            entry[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+            status = SecItemAdd(entry as CFDictionary, nil)
+        }
+        if status != errSecSuccess { bindings.credentialStoreError = "无法保存本机语音凭据。" }
+        return KotlinUnit()
+    }
+    bindings.encoderFactory = { NativeOpusEncoder() }
+    bindings.beginRecording = { callback in
+        KotlinBoolean(bool: NativeStreamingMicrophone.shared.start { _ = callback($0) })
+    }
+    bindings.finishRecording = { NativeStreamingMicrophone.shared.stop(); return KotlinUnit() }
+    bindings.cancelRecording = { NativeStreamingMicrophone.shared.stop(); return KotlinUnit() }
 }
 
 /// iOS does not expose an explicit API for the Wireless LAN & Cellular Data prompt.

@@ -64,6 +64,7 @@ internal fun RoleEditor(roles: List<AgentRole>, defaultId: String, selectedId: S
     var error by remember { mutableStateOf("") }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) scope.launch {
             runCatching {
@@ -121,6 +122,10 @@ internal fun RoleEditor(roles: List<AgentRole>, defaultId: String, selectedId: S
             Column(Modifier.heightIn(max = 400.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(name, { name = it }, label = { Text("角色名称") }, singleLine = true)
                 Row { RoleAvatar(avatar); TextButton(onClick = { picker.launch("image/*") }) { Text("选择头像") } }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    TextButton(onClick = { prompt = "" }) { Text("清空") }
+                    TextButton(onClick = { clipboard.getText()?.text?.let { prompt = it } }) { Text("粘贴") }
+                }
                 OutlinedTextField(prompt, { prompt = it }, label = { Text("角色提示词") }, minLines = 4, maxLines = 7)
                 if (error.isNotBlank()) Text(error, color = MaterialTheme.colorScheme.error)
             }

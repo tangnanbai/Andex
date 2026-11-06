@@ -236,10 +236,17 @@ class AlpineRuntime(
         target
     }
     suspend fun installPreinstalledExtensions(): Unit = withContext(Dispatchers.IO) {
-        installAssetDirectoryRecursively("extensions", "/root/.andex/extensions")
+        installPreinstalledExtensionsSync()
     }
     internal fun installPreinstalledExtensionsSync() {
         installAssetDirectoryRecursively("extensions", "/root/.andex/extensions")
+        upgradeBundledMemory(
+            File(rootfsDir, "root/.andex/extensions/pi-long-memory"),
+            File(rootfsDir, "root/.andex/.removed-preinstalled-extensions/pi-long-memory"),
+            OriginalMemoryFileHashes.keys.associateWith { name ->
+                appContext.assets.open("extensions/pi-long-memory/$name").use { it.readBytes() }
+            },
+        )
     }
     private fun installAssetDirectoryRecursively(assetDir: String, guestTargetDir: String) {
         val list = runCatching { appContext.assets.list(assetDir) }.getOrNull() ?: return

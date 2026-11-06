@@ -9,6 +9,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.remember
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -194,6 +195,11 @@ fun AndexTheme(
                 context = next
             }
             (context as? android.app.Activity)?.let { activity ->
+                val color = AndexBackground.toArgb()
+                activity.window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(color))
+                activity.window.decorView.setBackgroundColor(color)
+                val preferences = activity.getSharedPreferences("window_appearance", android.content.Context.MODE_PRIVATE)
+                if (preferences.getInt("background", 0) != color) preferences.edit().putInt("background", color).apply()
                 androidx.core.view.WindowCompat.getInsetsController(activity.window, view).apply {
                     isAppearanceLightStatusBars = themeForeground(AndexBackground) == androidx.compose.ui.graphics.Color.Black
                     isAppearanceLightNavigationBars = themeForeground(AndexBackground) == androidx.compose.ui.graphics.Color.Black

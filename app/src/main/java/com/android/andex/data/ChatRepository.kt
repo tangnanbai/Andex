@@ -94,6 +94,16 @@ enum class PersistedChatWriteIntent {
     ReplaceFromImport,
 }
 
+internal fun shouldPreserveUnloadedChatMessages(
+    writeIntent: PersistedChatWriteIntent,
+    isCurrentSession: Boolean,
+    incomingMessagesEmpty: Boolean,
+    declaredMessageCount: Int,
+    storedMessageCount: Int,
+): Boolean = writeIntent != PersistedChatWriteIntent.ReplaceFromImport &&
+    incomingMessagesEmpty && storedMessageCount > 0 &&
+    (!isCurrentSession || declaredMessageCount > 0)
+
 interface ChatStatePersistence {
     val chatState: Flow<PersistedChatState>
 
@@ -637,9 +647,11 @@ class ChatRepository(
             val sessionEntities = sessions.mapIndexed { index, session -> session.toSessionEntity(index.toLong()) }
             val sessionIds = sessionEntities.map { it.id }
             chatHistoryDao.upsertSessions(sessionEntities)
-            chatHistoryDao.deleteWorkspaceFileRefsExceptSessions(sessionIds)
-            chatHistoryDao.deleteSessionsExcept(sessionIds)
-            chatHistoryDao.deleteMessagesExceptSessions(sessionIds)
+            if (writeIntent != PersistedChatWriteIntent.SyncSnapshot) {
+                chatHistoryDao.deleteWorkspaceFileRefsExceptSessions(sessionIds)
+                chatHistoryDao.deleteSessionsExcept(sessionIds)
+                chatHistoryDao.deleteMessagesExceptSessions(sessionIds)
+            }
             val existingWorkspaceFileRefsComplete = chatHistoryDao.getMeta()?.workspaceFileRefsComplete ?: true
             val existingMessageCounts = chatHistoryDao.getMessageStatsForSessions(sessionIds)
                 .associate { stats -> stats.sessionId to stats.messageCount }
@@ -654,10 +666,13 @@ class ChatRepository(
             sessions.forEach { session ->
                 val existingMessageCount = existingMessageCounts[session.id] ?: 0
                 val syncedMessages = syncActiveBranches(session.messages)
-                val isMetadataOnlySnapshot = writeIntent != PersistedChatWriteIntent.ReplaceFromImport &&
-                    session.id != safeCurrentSessionId &&
-                    syncedMessages.isEmpty() &&
-                    existingMessageCount > 0
+                val isMetadataOnlySnapshot = shouldPreserveUnloadedChatMessages(
+                    writeIntent = writeIntent,
+                    isCurrentSession = session.id == safeCurrentSessionId,
+                    incomingMessagesEmpty = syncedMessages.isEmpty(),
+                    declaredMessageCount = session.messageCount,
+                    storedMessageCount = existingMessageCount,
+                )
                 if (!isMetadataOnlySnapshot) {
                     val messageEntities = syncedMessages.mapIndexed { index, message ->
                         ChatMessageEntityMapper.toEntity(

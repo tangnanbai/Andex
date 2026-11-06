@@ -1,6 +1,8 @@
 package com.android.andex.ui
 
 import android.graphics.BitmapFactory
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.TextRange
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.CubicBezierEasing
@@ -342,8 +344,8 @@ private fun LegacyConversationDrawer(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp)
-                        .padding(top = 18.dp)
+                        .padding(horizontal = 20.dp)
+                        .padding(top = 12.dp)
                         .statusBarsPadding()
                 ) {
                     Row(
@@ -353,7 +355,7 @@ private fun LegacyConversationDrawer(
                     ) {
                         Text(
                             text = "Andex",
-                            style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Normal),
+                            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Normal),
                             color = AndexOnSurface,
                             modifier = Modifier.padding(start = 6.dp),
                         )
@@ -369,7 +371,8 @@ private fun LegacyConversationDrawer(
                                         searchExpanded = true
                                     }
                                 },
-                                size = 46.dp,
+                                size = 38.dp,
+                                iconSize = 19.dp,
                                 containerColor = Color.Transparent,
                             )
                             HeaderCircleButton(
@@ -380,7 +383,8 @@ private fun LegacyConversationDrawer(
                                     searchQuery = ""
                                     onSettingsSelected()
                                 },
-                                size = 46.dp,
+                                size = 38.dp,
+                                iconSize = 19.dp,
                                 containerColor = Color.Transparent,
                             )
                         }
@@ -488,12 +492,12 @@ private fun DrawerSessionRow(
     var isRenaming by remember { mutableStateOf(false) }
     var renameFieldHadFocus by remember { mutableStateOf(false) }
     var renameFocusRequest by remember { mutableIntStateOf(0) }
-    var titleValue by remember(session.id, session.title, newChatTitle) { mutableStateOf(session.title.ifBlank { newChatTitle }) }
+    var titleValue by remember(session.id, session.title, newChatTitle) { mutableStateOf(session.title.ifBlank { newChatTitle }.let { TextFieldValue(it, TextRange(it.length)) }) }
     val focusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
 
     fun commitRename() {
-        val trimmed = titleValue.trim()
+        val trimmed = titleValue.text.trim()
         if (trimmed.isNotBlank() && trimmed != session.title) {
             onRename(trimmed)
         }
@@ -589,7 +593,7 @@ private fun DrawerSessionRow(
             onDismissRequest = { menuExpanded = false },
             onRename = {
                 menuExpanded = false
-                titleValue = session.title.ifBlank { newChatTitle }
+                titleValue = session.title.ifBlank { newChatTitle }.let { TextFieldValue(it, TextRange(it.length)) }
                 renameFieldHadFocus = false
                 isRenaming = true
                 renameFocusRequest += 1

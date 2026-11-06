@@ -38,7 +38,8 @@ class ThemePaletteTest {
         for (choice in ThemeAccentOptions) for (dark in listOf(false, true)) for (contrast in listOf(false, true)) {
             val palette = andexPalette(dark, increasedContrast = contrast, accent = choice.id)
             assertEquals(choice.primary, palette.primary)
-            assertEquals(choice.secondary, palette.background)
+            val expectedBackground = if (dark) Color.Black else choice.secondary.takeUnless { it == Color.Black } ?: Color.White
+            assertEquals(expectedBackground, palette.background)
             assertEquals(choice.primary, palette.secondary)
             for ((fill, label) in listOf(
                 palette.primary to palette.onPrimary,
@@ -56,7 +57,7 @@ class ThemePaletteTest {
                     "${choice.id} dark=$dark fill=$fill label=$label")
             }
             val material = andexMaterialColors(palette)
-            assertEquals(choice.secondary, material.background)
+            assertEquals(expectedBackground, material.background)
             assertEquals(palette.surface, material.surface)
             assertEquals(palette.onSurface, material.primary)
             assertEquals(palette.onSurface, material.onBackground)
@@ -71,7 +72,7 @@ class ThemePaletteTest {
         for (accent in ThemeColorOptions) for (background in ThemeColorOptions) for (dark in listOf(false, true)) {
             val palette = andexPalette(dark, accent = accent.id, backgroundColor = background.id)
             assertEquals(accent.color, palette.primary)
-            assertEquals(background.color, palette.background)
+            assertEquals(if (dark) Color.Black else background.color.takeUnless { it == Color.Black } ?: Color.White, palette.background)
             val material = andexMaterialColors(palette)
             for (surface in listOf(palette.background, palette.surface, palette.surfaceHigh, palette.surfaceHigher, palette.surfaceVariant)) {
                 assertTrue(ratio(surface, palette.onSurface) >= 4.5f, "${accent.id}/${background.id} text")
@@ -86,9 +87,9 @@ class ThemePaletteTest {
     @Test fun choosingOneColorDoesNotChangeTheOtherAndOldPairsStillResolve() {
         for (pair in ThemeAccentOptions) {
             assertEquals(pair.primary, resolvedThemeColor(pair.id, false).color)
-            assertEquals(pair.secondary, resolvedBackgroundColor("auto", pair.id, false).color)
+            assertEquals(pair.secondary.takeUnless { it == Color.Black } ?: Color.White, resolvedBackgroundColor("auto", pair.id, false).color)
         }
-        assertEquals(Color.Black, andexPalette(false, accent = "white", backgroundColor = "black").background)
-        assertEquals(Color.White, andexPalette(true, accent = "black", backgroundColor = "white").background)
+        assertEquals(Color.White, andexPalette(false, accent = "white", backgroundColor = "black").background)
+        assertEquals(Color.Black, andexPalette(true, accent = "black", backgroundColor = "white").background)
     }
 }

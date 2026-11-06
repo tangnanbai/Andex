@@ -54,6 +54,12 @@ class SettingsRepository(
         }
     }
     suspend fun initializeLanguageIfNeeded() {
+        context.dataStore.edit { preferences ->
+            preferences[VOICE_INPUT]?.let { raw ->
+                val normalized = serializeVoiceInputSettings(parseVoiceInputSettings(raw))
+                if (raw != normalized) preferences[VOICE_INPUT] = normalized
+            }
+        }
         val preferences = context.dataStore.data.first()
         if (preferences[LANGUAGE] == null) {
             context.dataStore.edit { it[LANGUAGE] = defaultAppLanguage().storageValue }
@@ -155,7 +161,7 @@ class SettingsRepository(
             themeMode = AppThemeMode.fromStorage(preferences[THEME_MODE]),
             themeAccent = preferences[THEME_ACCENT] ?: "auto",
             themeBackground = preferences[THEME_BACKGROUND] ?: "auto",
-            voiceInput = parseVolcAsr(preferences[VOICE_INPUT].orEmpty()),
+            voiceInput = parseVoiceInputSettings(preferences[VOICE_INPUT].orEmpty()),
             defaultChatModelKey = preferences[DEFAULT_CHAT_MODEL_KEY].orEmpty(),
             defaultTitleModelKey = preferences[DEFAULT_TITLE_MODEL_KEY].orEmpty(),
             defaultNamingModelKey = preferences[DEFAULT_NAMING_MODEL_KEY].orEmpty(),
@@ -452,7 +458,7 @@ class SettingsRepository(
             it[THEME_MODE] = settings.themeMode.storageValue
             it[THEME_ACCENT] = settings.themeAccent
             it[THEME_BACKGROUND] = settings.themeBackground
-            it[VOICE_INPUT] = serializeVolcAsr(settings.voiceInput)
+            it[VOICE_INPUT] = serializeVoiceInputSettings(settings.voiceInput)
             it[DEFAULT_CHAT_MODEL_KEY] = settings.defaultChatModelKey
             it[DEFAULT_TITLE_MODEL_KEY] = settings.defaultTitleModelKey
             it[DEFAULT_NAMING_MODEL_KEY] = settings.defaultNamingModelKey
@@ -492,11 +498,12 @@ class SettingsRepository(
             it[SELECTED_ROLE_ID] = settings.selectedRoleId
         }
     }
-    suspend fun updateAppearance(accent: String, background: String, voice: VolcAsrSettings) {
+    suspend fun updateAppearance(accent: String, background: String, voice: VoiceInputSettings) {
         context.dataStore.edit {
             it[THEME_ACCENT] = accent
-            it[THEME_BACKGROUND] = background
-            it[VOICE_INPUT] = serializeVolcAsr(voice)
+            if (background != "black") it[THEME_BACKGROUND] = background
+            it[THEME_MODE] = (if (background == "black") AppThemeMode.Dark else AppThemeMode.Light).storageValue
+            it[VOICE_INPUT] = serializeVoiceInputSettings(voice)
         }
     }
     suspend fun updateThemeMode(themeMode: AppThemeMode) {
@@ -525,7 +532,7 @@ class SettingsRepository(
             it[THEME_MODE] = settings.themeMode.storageValue
             it[THEME_ACCENT] = settings.themeAccent
             it[THEME_BACKGROUND] = settings.themeBackground
-            it[VOICE_INPUT] = serializeVolcAsr(settings.voiceInput)
+            it[VOICE_INPUT] = serializeVoiceInputSettings(settings.voiceInput)
         }
     }
     suspend fun updateAgentModeAuthorization(

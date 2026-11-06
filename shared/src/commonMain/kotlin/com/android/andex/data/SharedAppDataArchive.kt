@@ -340,7 +340,7 @@ private fun AppSettings.toAndroidAppSettingsJson(): JsonObject = buildJsonObject
     put("themeMode", themeMode.storageValue)
     put("themeAccent", themeAccent)
     put("themeBackground", themeBackground)
-    put("voiceInput", Json.parseToJsonElement(serializeVolcAsr(voiceInput)))
+    put("voiceInput", Json.parseToJsonElement(serializeVoiceInputSettings(voiceInput)))
     put("defaultChatModelKey", defaultChatModelKey)
     put("defaultTitleModelKey", defaultTitleModelKey)
     put("defaultNamingModelKey", defaultNamingModelKey)
@@ -448,7 +448,7 @@ private fun parseAndroidAppSettings(value: JsonObject): AppSettings {
         themeMode = AppThemeMode.fromStorage(value.stringValue("themeMode")),
         themeAccent = value.stringValueOrDefault("themeAccent", "auto"),
         themeBackground = value.stringValueOrDefault("themeBackground", "auto"),
-        voiceInput = value["voiceInput"]?.let { parseVolcAsr(it.toString()) } ?: VolcAsrSettings(),
+        voiceInput = value["voiceInput"]?.let { parseVoiceInputSettings(it.toString()) } ?: VoiceInputSettings(),
         defaultChatModelKey = value.stringValueOrDefault(
             "defaultChatModelKey",
             defaults.defaultChatModelKey,

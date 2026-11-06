@@ -7,6 +7,13 @@ import com.android.andex.data.chatdb.PersistedAssistantResponseBlockType
 import com.android.andex.shared.resources.Res
 import kotlinx.coroutines.delay
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.decodeFromJsonElement
 import org.jetbrains.compose.resources.ExperimentalResourceApi
 import kotlin.random.Random
 
@@ -15,9 +22,13 @@ object ShowcaseCatalog {
     fun isSession(id: String) = id.startsWith(sessionPrefix)
 
     @OptIn(ExperimentalResourceApi::class)
-    suspend fun load(android: Boolean): List<PersistedChatSession> = Json.decodeFromString(
-        Res.readBytes("files/showcase/${if (android) "catalog" else "catalog-ios"}.json").decodeToString(),
-    )
+    suspend fun load(android: Boolean): List<PersistedChatSession> {
+        val strings = Json.parseToJsonElement(Res.readBytes("files/showcase/shared-strings.json").decodeToString()).jsonObject
+        val catalog = Json.parseToJsonElement(
+            Res.readBytes("files/showcase/${if (android) "catalog" else "catalog-ios"}.json").decodeToString(),
+        )
+        return Json.decodeFromJsonElement(restoreShowcaseStrings(catalog, strings))
+    }
 
     fun providers(): List<LlmProviderConfig> = listOf(
         Triple("openai", "OpenAI", "gpt-6-astra"),
@@ -30,6 +41,13 @@ object ShowcaseCatalog {
             modelId = model, manualModelIds = listOf(model), enabledModelIds = listOf(model),
         )
     }
+}
+
+internal fun restoreShowcaseStrings(value: JsonElement, strings: JsonObject): JsonElement = when (value) {
+    is JsonArray -> JsonArray(value.map { restoreShowcaseStrings(it, strings) })
+    is JsonObject -> JsonObject(value.mapValues { restoreShowcaseStrings(it.value, strings) })
+    is JsonPrimitive -> if (value.isString && value.content.startsWith("__ANDEX_SHOWCASE_STRING_"))
+        strings[value.content] ?: error("Missing showcase data: ${value.content}") else value
 }
 
 /** Emits normal chat blocks so the production renderer supplies all streaming animations. */

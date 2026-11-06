@@ -8,6 +8,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -29,6 +30,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -52,6 +54,13 @@ import com.android.andex.ui.theme.AndexSurface
 private val ConversationControlShadow = Color(0x14000000)
 private val ConversationControlHalo = Color(0x18000000)
 private val ConversationMotionEasing = CubicBezierEasing(0.22f, 0.84f, 0.18f, 1f)
+
+@Composable
+fun conversationModelLabelWidth(label: String, hasIcon: Boolean): Dp {
+    val measured = rememberTextMeasurer().measure(label,
+        MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Normal), softWrap = false)
+    return with(LocalDensity.current) { measured.size.width.toDp() } + 38.dp + if (hasIcon) 20.dp else 0.dp
+}
 
 /** Includes row padding, provider logo, selection mark and gaps. */
 @Composable
@@ -90,15 +99,18 @@ fun AndexConversationTopBarFrame(
                 containerColor = AndexSurface.copy(alpha = 0.96f),
             )
         }
-        Box(
+        BoxWithConstraints(
             modifier = Modifier
                 .weight(1f)
                 .padding(
                     start = if (showMenu) 12.dp else 5.dp,
                     end = 0.dp,
                 ),
-            content = centerContent,
-        )
+        ) {
+            CompositionLocalProvider(LocalExpandedRoleName provides (maxWidth >= 520.dp)) {
+                Box(Modifier.fillMaxWidth(), content = centerContent)
+            }
+        }
         LocalShowcaseControls.current?.let { ShowcasePlaybackButton(it) }
     }
 }

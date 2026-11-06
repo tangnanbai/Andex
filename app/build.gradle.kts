@@ -42,7 +42,7 @@ val appVersionName = providers.gradleProperty("andex.versionName")
     .orNull
     ?.trim()
     ?.takeIf { it.isNotEmpty() }
-    ?: "0.98"
+    ?: "0.99"
 val piBridgeProjectDir = rootProject.layout.projectDirectory.dir("pi-bridge")
 val piBridgeGeneratedAssetsDir = layout.buildDirectory.dir("generated/assets/piBridge")
 val preinstalledExtensionsDir = rootProject.layout.projectDirectory.dir("extensions")
@@ -114,7 +114,7 @@ android {
         // Alpine/Termux-style local runtimes install executable ELF files into app-private
         // storage. Android blocks execve() from that location for targetSdk >= 29.
         targetSdk = 28
-        versionCode = 24
+        versionCode = 25
         versionName = appVersionName
 
         ndk {
@@ -180,6 +180,13 @@ android {
             )
         }
 
+        create("optimized") {
+            initWith(getByName("release"))
+            matchingFallbacks += listOf("release")
+            // Preserve the signing identity of existing installations.
+            signingConfig = signingConfigs.getByName("debug")
+        }
+
         create("nightly") {
             initWith(getByName("release"))
             applicationIdSuffix = ".nightly"
@@ -206,6 +213,11 @@ android {
         buildConfig = true
         compose = true
         aidl = true
+    }
+
+    androidResources {
+        // Phone distributions support ARM64. Keep development assets in the source tree.
+        ignoreAssetsPatterns += listOf("x86_64", "x86")
     }
 
     packaging {

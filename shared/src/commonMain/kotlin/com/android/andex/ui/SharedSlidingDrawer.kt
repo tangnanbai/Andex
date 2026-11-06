@@ -16,6 +16,8 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.IntOffset
@@ -58,6 +60,9 @@ class SharedSlidingDrawerState {
 @Composable
 fun rememberSharedSlidingDrawerState() = remember { SharedSlidingDrawerState() }
 
+val LocalConversationImeEnabled = staticCompositionLocalOf { true }
+val LocalDrawerVisible = staticCompositionLocalOf { true }
+
 /** Both sides share the exact same drag, release animation, sheet placement and scrim. */
 @Composable
 fun SharedSlidingDrawer(
@@ -73,6 +78,14 @@ fun SharedSlidingDrawer(
     val density = LocalDensity.current
     var sheetWidth by remember(density) { mutableFloatStateOf(with(density) { 322.dp.toPx() }) }
     val sign = if (right) -1f else 1f
+    val drawerActive = drawerState.isOpen || drawerState.targetValue == DrawerValue.Open
+    val allowContentIme = LocalConversationImeEnabled.current && !drawerActive
+    val focus = LocalFocusManager.current
+    val keyboard = LocalSoftwareKeyboardController.current
+    LaunchedEffect(drawerActive) {
+        focus.clearFocus(force = true)
+        keyboard?.hide()
+    }
     Box(Modifier.fillMaxSize().pointerInput(drawerState, right) {
         awaitEachGesture {
             val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
@@ -112,7 +125,11 @@ fun SharedSlidingDrawer(
             }
         }
     }) {
-        content()
+        CompositionLocalProvider(LocalConversationImeEnabled provides allowContentIme) {
+            Box(Modifier.fillMaxSize().then(
+                if (allowContentIme) Modifier else Modifier.consumeWindowInsets(WindowInsets.ime),
+            )) { content() }
+        }
         if (drawerState.progress > 0f) {
             Box(Modifier.fillMaxSize().background(scrimColor.copy(alpha = scrimColor.alpha * drawerState.progress))
                 .semantics { contentDescription = "关闭导航菜单" }
@@ -121,7 +138,9 @@ fun SharedSlidingDrawer(
         Box(Modifier.align(if (right) AbsoluteAlignment.TopRight else AbsoluteAlignment.TopLeft)
             .offset { IntOffset(((1f - drawerState.progress) * sheetWidth * -sign).roundToInt(), 0) }
             .onSizeChanged { if (it.width > 0) sheetWidth = it.width.toFloat() }) {
-            drawerContent()
+            CompositionLocalProvider(LocalDrawerVisible provides drawerActive) {
+                drawerContent()
+            }
         }
     }
 }

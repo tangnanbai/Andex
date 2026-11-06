@@ -171,7 +171,7 @@ data class AppSettings(
     val themeMode: AppThemeMode = AppThemeMode.System,
     val themeAccent: String = "auto",
     val themeBackground: String = "auto",
-    val voiceInput: VolcAsrSettings = VolcAsrSettings(),
+    val voiceInput: VoiceInputSettings = VoiceInputSettings(),
     val defaultChatModelKey: String = "",
     val defaultTitleModelKey: String = "",
     val defaultNamingModelKey: String = "",
@@ -217,7 +217,7 @@ private const val MaxLlmInactivityReconnectTimeoutSeconds = 3600
 const val OnboardingStarterPrompt = "Hi"
 const val AndexWebsiteUrl = "https://andex.baimoqilin.com"
 const val AndexGitHubUrl = "https://github.com/tangnanbai/Andex"
-const val AndexPrivacyPolicyUrl = "https://github.com/tangnanbai/Andex/wiki/Privacy-Policy"
+const val AndexPrivacyPolicyUrl = "https://github.com/tangnanbai/Andex/blob/main/docs/privacy-policy.md"
 private val AppSettingsJson = Json {
     ignoreUnknownKeys = true
     encodeDefaults = true
@@ -225,7 +225,7 @@ private val AppSettingsJson = Json {
 fun serializeAppSettings(settings: AppSettings): String = AppSettingsJson.encodeToString(settings)
 fun parseAppSettings(value: String, fallback: AppSettings = AppSettings()): AppSettings =
     if (value.isBlank()) fallback else runCatching {
-        AppSettingsJson.decodeFromString<AppSettings>(value)
+        AppSettingsJson.decodeFromString<AppSettings>(clearLegacyVoiceConfiguration(value))
     }.getOrDefault(fallback)
 fun defaultAppLanguage(): AppLanguage {
     return appLanguageForTag(platformLanguageTag())

@@ -303,7 +303,12 @@ class AndexAppExtensionManager(
                 parseSnapshot(response.optJSONObject("snapshot"))
             }.onSuccess { snapshot ->
                 publishSnapshot(snapshot)
-            }.onFailure(::recordFailure)
+            }.onFailure { error ->
+                recordFailure(error)
+                if (error !is CancellationException) _notifications.emit(
+                    AndexAppExtensionNotification(error.message ?: "操作失败，请重试", "error"),
+                )
+            }
         }
     }
 

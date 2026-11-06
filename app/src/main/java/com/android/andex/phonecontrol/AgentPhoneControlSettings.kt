@@ -60,7 +60,7 @@ fun AgentPhoneControlSettings() {
                     enabled, { enabled = it; preferences.enabled = it })
                 HorizontalDivider()
                 Text("无障碍", style = MaterialTheme.typography.titleMedium)
-                Text(if (status.optBoolean("accessibility_ready")) "已授权 · 可以点击、滑动和读取屏幕" else "未就绪 · 请在系统设置中启用 Andex",
+                Text(if (status.optBoolean("accessibility_ready")) "已授权 · 可以点击、滑动和读取屏幕" else if (status.optBoolean("accessibility_authorized")) "权限已开启 · 正在等待系统连接服务" else "权限已关闭 · 请在系统设置中启用 Andex",
                     style = MaterialTheme.typography.bodySmall, color = AndexOnSurfaceVariant)
                 SettingsActionButton("无障碍授权", {
                     context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))

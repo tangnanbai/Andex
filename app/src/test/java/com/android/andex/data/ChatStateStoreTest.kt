@@ -18,6 +18,32 @@ import org.junit.Test
 
 class ChatStateStoreTest {
     @Test
+    fun queuedSelectionDoesNotDiscardExplicitDeletionIntent() = runBlocking {
+        val first = ChatSession(id = "first", title = "First", preview = "", messages = emptyList())
+        val second = ChatSession(id = "second", title = "Second", preview = "", messages = emptyList())
+        val repository = RecordingChatStatePersistence(PersistedChatState(
+            sessions = listOf(first, second), currentSessionId = first.id,
+        ))
+        val dispatcher = QueuedCoroutineDispatcher()
+        val scope = CoroutineScope(SupervisorJob() + dispatcher)
+        try {
+            val store = ChatStateStore(scope, repository)
+            dispatcher.runUntilIdle()
+            store.update(PersistedChatWriteIntent.DeleteSession) {
+                it.copy(sessions = listOf(second), currentSessionId = second.id)
+            }
+            store.update { it.copy(currentSessionId = second.id) }
+            dispatcher.runUntilIdle()
+            val write = repository.operations.filterIsInstance<PersistedOperation.Snapshot>().single()
+            assertEquals(PersistedChatWriteIntent.DeleteSession, write.writeIntent)
+            assertEquals(listOf(second.id), write.sessions.map { it.id })
+        } finally {
+            scope.cancel()
+            dispatcher.runUntilIdle()
+        }
+    }
+
+    @Test
     fun checkpointQueuedWithDeletionPersistsWithoutPublishingCheckpointToUi() = runBlocking {
         val deletedSession = ChatSession(
             id = "deleted-session",

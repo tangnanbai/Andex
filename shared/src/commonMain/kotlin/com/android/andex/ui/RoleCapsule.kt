@@ -38,6 +38,8 @@ import androidx.compose.ui.window.PopupProperties
 import com.android.andex.data.AgentRole
 import com.android.andex.ui.theme.*
 
+val LocalExpandedRoleName = staticCompositionLocalOf { false }
+
 /** Shared by model, balance and role controls so height, type and shadow stay identical. */
 @Composable
 fun ConversationCapsule(modifier: Modifier = Modifier, onClick: (() -> Unit)? = null,
@@ -65,16 +67,23 @@ fun RoleCapsule(roles: List<AgentRole>, selectedId: String, defaultId: String, m
     var availableWidth by remember { mutableStateOf(242.dp) }
     val density = LocalDensity.current
     val desiredWidth = conversationModelMenuWidth(choices.map { it.name }).coerceAtLeast(200.dp)
+    val showName = LocalExpandedRoleName.current
     Box(modifier) {
-        ConversationCapsule(Modifier.size(38.dp).semantics {
+        ConversationCapsule((if (showName) Modifier.widthIn(max = 210.dp) else Modifier.size(38.dp)).semantics {
             contentDescription = "切换角色：${role?.name ?: "默认助手"}"
         }.onGloballyPositioned {
             height = it.size.height
             val bounds = it.boundsInWindow()
             availableWidth = with(density) { (bounds.right - 20.dp.toPx()).toDp() }.coerceAtLeast(1.dp)
-        }, onClick = { expanded = true }, horizontalPadding = 4.dp) {
+        }, onClick = { expanded = true }, horizontalPadding = if (showName) 8.dp else 4.dp) {
             Box(Modifier.size(30.dp).clip(CircleShape), contentAlignment = Alignment.Center) {
                 avatar(role?.avatar ?: "🤖", Modifier.fillMaxSize())
+            }
+            if (showName) {
+                Spacer(Modifier.width(8.dp))
+                Text(role?.name ?: "默认助手", Modifier.widthIn(max = 154.dp).padding(end = 4.dp),
+                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Normal),
+                    color = AndexOnSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
         if (visibility.currentState || visibility.targetState) Popup(

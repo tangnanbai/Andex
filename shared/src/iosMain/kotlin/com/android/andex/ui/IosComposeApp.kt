@@ -21385,6 +21385,19 @@ fun IosComposeApp(
 
 
 
+                    "app.importMarkdown" -> {
+                        val file = platformServices.pickFile()
+                        buildJsonObject {
+                            if (file == null) put("cancelled", true)
+                            else put("text", com.android.andex.data.decodeMemoryMarkdown(file.bytes))
+                        }
+                    }
+                    "app.exportMarkdown" -> {
+                        val text = args["text"]?.jsonPrimitive?.contentOrNull.orEmpty()
+                        val saved = platformServices.exportFile("Andex-memory.md", "text/markdown", text.encodeToByteArray())
+                        buildJsonObject { put("exported", saved == true); put("cancelled", saved == null) }
+                    }
+
                     "app.notify" -> withContext(Dispatchers.Main) {
 
 
@@ -51476,7 +51489,7 @@ private fun SharedConversationModelSelector(
 
 
 
-                .fillMaxWidth()
+                .width(conversationModelLabelWidth(selectedModelName, selectedDisplay?.icon != null))
 
 
 
@@ -55477,7 +55490,7 @@ private fun SharedComposer(
 
 
 
-    val imeVisible = WindowInsets.ime.getBottom(density) > 0
+    val imeVisible = LocalConversationImeEnabled.current && WindowInsets.ime.getBottom(density) > 0
 
 
 
@@ -56157,7 +56170,7 @@ private fun SharedComposer(
 
 
 
-        targetValue = if (imeVisible) 12.dp else 18.dp,
+        targetValue = 18.dp,
 
 
 
@@ -70520,7 +70533,7 @@ internal fun buildNativeSettingsSnapshot(
 
 
 
-        "voiceInput" to Json.parseToJsonElement(com.android.andex.data.serializeVolcAsr(settings.voiceInput)),
+        "voiceInput" to Json.parseToJsonElement(com.android.andex.data.serializeVoiceInputSettings(settings.voiceInput)),
 
 
 
@@ -72889,7 +72902,7 @@ internal fun AppSettings.withNativeSettingsPatch(patch: JsonObject): AppSettings
 
 
 
-    voiceInput = patch["voiceInput"]?.let { com.android.andex.data.parseVolcAsr(it.toString()) } ?: voiceInput,
+    voiceInput = patch["voiceInput"]?.let { com.android.andex.data.parseVoiceInputSettings(it.toString()) } ?: voiceInput,
 
 
 

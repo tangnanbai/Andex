@@ -16,7 +16,7 @@ The terminal emulator and view are the existing vendored Termux modules under
 The embedded runtime reuses Aether's existing PRoot, loader, and talloc assets
 from `app/src/main/assets/runtimes/alpine/arm64-v8a` without changing them.
 
-The x86_64 emulator runtime bundles `bootstrap-x86_64.zip` from the same
+Source-only x86_64 emulator assets (excluded from Android distributions since 0.99) include `bootstrap-x86_64.zip` from the same
 release, SHA-256 `9933e09342ec96df3f912483db622f7b7ba78d4e627c80951d0123b6b2fff750`.
 Its unmodified PRoot 5.1.107.96 and libtalloc 2.5.0 packages come from the
 official Termux repository. Package URLs and checksums are recorded in
@@ -69,7 +69,7 @@ official Alpine CDN and verifies SHA-256
 ## Android bundled ADB and 7zip
 
 Andex includes unmodified official Termux `android-tools` and `7zip` packages
-and their shared-library dependencies for ARM64 and x86_64. Package versions,
+and their shared-library dependencies for ARM64. Historical x86_64 assets remain in source only and are excluded from APKs. Package versions,
 download paths and SHA-256 checksums are recorded in
 `app/src/main/assets/runtimes/native-tools/<abi>/manifest.json`.
 `scripts/prepare-native-tools.py` reconstructs the bundles from those pinned
@@ -89,3 +89,18 @@ Dependencies retain their respective upstream licenses.
 Andex uses Haze 1.7.2 by Christopher Banes and contributors for Compose
 background blur, licensed under Apache License 2.0.
 Source and license: https://github.com/chrisbanes/haze/tree/1.7.2.
+
+## Opus voice encoding
+
+Android uses the pure Java Concentus Opus encoder,
+`io.github.jaredmdobson:concentus:1.0.2`. Its BSD-style license and copyright
+notice are included in `shared/src/commonMain/composeResources/files/licenses/concentus.txt`
+and distributed with application resources.
+Source: https://github.com/jaredmdobson/concentus and
+https://github.com/lostromb/concentus.
+
+The independently implemented online client was informed by the wire behavior
+in `yangmoling/doubaoime-asr` and `melody0709/VoxType`, pinned in
+`docs/doubao-ime-asr.md`. Neither reference exposed a clear root license when
+checked; their public availability is not treated as permission to copy or
+redistribute their code. No reference-client source is bundled.

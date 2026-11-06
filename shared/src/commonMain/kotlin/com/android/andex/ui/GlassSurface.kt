@@ -42,7 +42,7 @@ fun AndexGlassHost(increasedContrast: Boolean = false, content: @Composable () -
         LocalGlassContrast provides increasedContrast,
     ) {
         Box(Modifier.fillMaxSize().hazeSource(state, zIndex = 0f, key = "app")) {
-            content()
+            VoiceFeedbackHost(content)
         }
     }
 }

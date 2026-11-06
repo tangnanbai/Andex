@@ -11,6 +11,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -40,6 +41,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.android.andex.platform.LocalReduceMotion
 import com.android.andex.ui.theme.*
 import kotlinx.coroutines.Dispatchers
@@ -74,7 +76,7 @@ fun SharedWorkTraceOverlay(
                 drawerContainerColor = AndexSidebarBackground,
                 drawerShape = RoundedCornerShape(topStart = 30.dp, bottomStart = 30.dp),
             ) {
-                WorkTracePanel(if (rightActive) stepsProvider() else emptyList())
+                WorkTracePanel(if (rightActive) stepsProvider() else emptyList(), rightActive)
             }
         },
         content = content,
@@ -82,7 +84,9 @@ fun SharedWorkTraceOverlay(
 }
 
 @Composable
-private fun WorkTracePanel(steps: List<WorkTraceStep>) {
+private fun WorkTracePanel(steps: List<WorkTraceStep>, active: Boolean) {
+    val listState = rememberLazyListState()
+    var locateLatest by remember { mutableStateOf(true) }
     var query by rememberSaveable { mutableStateOf("") }
     var searchExpanded by rememberSaveable { mutableStateOf(false) }
     // Kept outside lazy rows: filtering, drawer closing and live updates do not reset disclosure.
@@ -105,6 +109,27 @@ private fun WorkTracePanel(steps: List<WorkTraceStep>) {
         }
     }
     val latestTaskId = tasks.lastOrNull()?.id
+    LaunchedEffect(active) {
+        query = ""
+        searchExpanded = false
+        if (active) {
+            locateLatest = true
+        }
+    }
+    LaunchedEffect(active, tasks, filtered, locateLatest) {
+        if (active && locateLatest && tasks.isNotEmpty() && query.isBlank() && filtered == tasks) {
+            val latest = tasks.last()
+            collapsedTasks = collapsedTasks - latest.id
+            expandedTasks = (expandedTasks + latest.id).distinct()
+            // Allow the expanded rows to be measured before jumping to the newest step.
+            withFrameNanos { }
+            val index = workTraceLatestRowIndex(tasks) { task ->
+                workTraceTaskExpanded(task.id, latestTaskId, expandedTasks, collapsedTasks, searching = false)
+            }
+            listState.scrollToItem(index)
+            locateLatest = false
+        }
+    }
     val taskStartTimes = remember(tasks) {
         tasks.associate { task -> task.id to (task.steps.firstOrNull { it.time > 0 }?.time ?: 0L) }
     }
@@ -112,30 +137,13 @@ private fun WorkTracePanel(steps: List<WorkTraceStep>) {
         Column(
             Modifier.fillMaxWidth()
                 .background(sharedDrawerOverlayBodyGradient(AndexSidebarBackground))
-                .padding(horizontal = 16.dp).padding(top = 18.dp).statusBarsPadding(),
+                .padding(horizontal = 20.dp).padding(top = 12.dp).statusBarsPadding(),
         ) {
-            Row(
-                Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                Text(
-                    "工作轨迹", Modifier.padding(start = 6.dp),
-                    color = AndexOnSurface,
-                    style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Normal),
-                )
-                HeaderCircleButton(
-                    icon = LucideIcons.Search, contentDescription = "搜索轨迹",
-                    onClick = { searchExpanded = !searchExpanded; if (!searchExpanded) query = "" },
-                    size = 46.dp, containerColor = Color.Transparent, showHalo = false,
-                )
-            }
-            AnimatedVisibility(searchExpanded || query.isNotBlank()) {
-                Column {
-                    Spacer(Modifier.height(16.dp))
-                    SharedDrawerSearchField(query) { query = it }
-                }
-            }
+            DrawerSearchHeader(
+                title = "工作轨迹", expanded = searchExpanded, query = query,
+                onExpandedChange = { searchExpanded = it; if (!it) query = "" },
+                onQueryChange = { query = it },
+            )
             Spacer(Modifier.height(12.dp))
         }
         Column(Modifier.padding(horizontal = 20.dp).weight(1f)) {
@@ -151,7 +159,7 @@ private fun WorkTracePanel(steps: List<WorkTraceStep>) {
                     Modifier.padding(vertical = 20.dp), color = AndexOnSurfaceVariant,
                 )
             }
-            LazyColumn(Modifier.weight(1f)) {
+            LazyColumn(Modifier.weight(1f), state = listState) {
                 filtered.forEach { task ->
                     val expanded = workTraceTaskExpanded(
                         task.id, latestTaskId, expandedTasks, collapsedTasks, searching = query.isNotBlank(),
@@ -247,7 +255,7 @@ private fun WorkTraceTimelineRow(
     val duration = if (LocalReduceMotion.current) 0 else 240
     val lineColor = AndexOnSurfaceVariant.copy(alpha = 0.16f)
     Row(
-        Modifier.fillMaxWidth().drawBehind {
+        Modifier.fillMaxWidth().padding(start = 14.dp).drawBehind {
             if (!isLast && size.height > 36.dp.toPx()) {
                 drawLine(
                     color = lineColor,
@@ -257,7 +265,7 @@ private fun WorkTraceTimelineRow(
                 )
             }
         },
-        horizontalArrangement = Arrangement.spacedBy(14.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Box(Modifier.width(22.dp), contentAlignment = Alignment.TopCenter) {
             val icon = when {
@@ -267,10 +275,10 @@ private fun WorkTraceTimelineRow(
                 step.kind == "工具" -> Icons.Rounded.Build
                 else -> null
             }
-            if (icon != null) Icon(icon, null, Modifier.padding(top = 9.dp).size(20.dp), tint = AndexOnSurfaceVariant)
+            if (icon != null) Icon(icon, null, Modifier.padding(top = 9.dp).size(16.dp), tint = AndexOnSurfaceVariant)
             else Box(Modifier.padding(top = 15.dp).size(8.dp).clip(CircleShape).background(AndexOnSurfaceVariant))
         }
-        Column(Modifier.weight(1f).padding(bottom = if (isLast) 16.dp else 22.dp)) {
+        Column(Modifier.weight(1f).padding(bottom = if (isLast) 14.dp else 18.dp)) {
             Column(
                 Modifier.fillMaxWidth()
                     .semantics { stateDescription = if (expanded) "已展开" else "已折叠" }
@@ -280,12 +288,22 @@ private fun WorkTraceTimelineRow(
             ) {
                 Text(
                     step.label.ifBlank { step.kind }, color = AndexOnSurface,
-                    style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+                    maxLines = 1, overflow = TextOverflow.Ellipsis,
                 )
+                if (!expanded) {
+                    val preview = remember(step) { workTraceStepPreview(step) }
+                    if (preview.isNotBlank()) Text(
+                        preview, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                        color = AndexOnSurfaceVariant,
+                    )
+                }
                 val elapsed = if (step.time > 0 && firstTime > 0) " · +${(step.time - firstTime).coerceAtLeast(0) / 1000} 秒" else ""
                 Text(
                     "${step.kind}$elapsed${if (step.running) " · 运行中" else ""}",
-                    style = MaterialTheme.typography.labelSmall, color = AndexOnSurfaceVariant,
+                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                    color = AndexOnSurfaceVariant.copy(alpha = 0.8f),
                 )
             }
             AnimatedVisibility(
@@ -329,7 +347,7 @@ private fun WorkTraceDetailBlock(label: String, text: String, code: Boolean) {
                     .verticalScroll(rememberScrollState())
                     .padding(if (code) 12.dp else 0.dp),
                 style = if (code) MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace)
-                    else MaterialTheme.typography.bodyMedium,
+                    else MaterialTheme.typography.bodySmall,
                 color = AndexContentText,
             )
         }

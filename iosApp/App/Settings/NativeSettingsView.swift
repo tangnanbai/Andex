@@ -628,13 +628,22 @@ private let nativeThemeColors: [(String, String, UInt32)] = [
     ("pink", "胭脂", 0xFF7CA2)
 ]
 
+private func nativeColorLuminance(_ hex: UInt32) -> Double {
+    let values = [Double((hex >> 16) & 255), Double((hex >> 8) & 255), Double(hex & 255)].map { value -> Double in
+        let channel = value / 255
+        return channel <= 0.04045 ? channel / 12.92 : pow((channel + 0.055) / 1.055, 2.4)
+    }
+    return values[0] * 0.2126 + values[1] * 0.7152 + values[2] * 0.0722
+}
+
 private func nativeSelectedColors(_ model: NativeSettingsModel, scheme: ColorScheme) -> (UInt32, UInt32) {
     let accent = model.string(model.settings, "themeAccent", fallback: "auto")
     let background = model.string(model.settings, "themeBackground", fallback: "auto")
     let dark = model.themeMode == "dark" || (model.themeMode != "light" && scheme == .dark)
     let legacy = nativeThemeAccents.first { $0.0 == accent }
     let primary = nativeThemeColors.first { $0.0 == accent }?.2 ?? legacy?.2 ?? 0xFF7CA2
-    let canvas = nativeThemeColors.first { $0.0 == background }?.2 ?? legacy?.3 ?? (dark ? 0x000000 : 0xFFFFFF)
+    let savedCanvas = nativeThemeColors.first { $0.0 == background }?.2 ?? legacy?.3 ?? 0xFFFFFF
+    let canvas = dark ? 0x000000 : (savedCanvas == 0 ? 0xFFFFFF : savedCanvas)
     return (primary, canvas)
 }
 
@@ -815,7 +824,7 @@ struct NativeSettingsView: View {
 
                     }
 
-                    settingsLink("info.circle", model.text("About", "关于"), model.text("Version ", "版本 ") + model.string(model.snapshot, "appVersion")) {
+                    settingsLink("info.circle", model.text("About", "关于"), model.string(model.snapshot, "appVersion")) {
 
                         NativeAboutSettingsView(model: model)
 
@@ -1038,14 +1047,18 @@ private struct NativeGeneralSettingsView: View {
             Text(background ? "页面背景 · 表面轻度区分" : "文字、图标、按钮、提示、高亮与描边").font(.caption)
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 4) {
-                    ForEach(nativeThemeColors, id: \.0) { item in
+                    ForEach(nativeThemeColors.sorted { nativeColorLuminance($0.2) > nativeColorLuminance($1.2) }, id: \.0) { item in
                         let active = current == item.2
                         Button {
                             let storedAccent = model.string(model.settings, "themeAccent", fallback: "auto")
                             let storedBackground = model.string(model.settings, "themeBackground", fallback: "auto")
                             if background {
                                 let accent = nativeThemeColors.first { $0.2 == selected.0 }!.0
-                                model.patch(["themeAccent": accent, "themeBackground": item.0])
+                                if item.0 == "black" {
+                                    model.patch(["themeAccent": accent, "themeMode": "dark"])
+                                } else {
+                                    model.patch(["themeAccent": accent, "themeBackground": item.0, "themeMode": "light"])
+                                }
                             } else {
                                 let keep = storedBackground == "auto" && nativeThemeAccents.contains { $0.0 == storedAccent }
                                     ? nativeThemeColors.first { $0.2 == selected.1 }!.0 : storedBackground
@@ -1081,13 +1094,12 @@ private struct NativeGeneralSettingsView: View {
                 Divider().overlay(colors.foreground.opacity(0.28))
                 colorRow("主题色", background: false)
                 colorRow("背景色", background: true)
-                HStack { Spacer(); Button("恢复默认 · 粉白 / 粉黑") { model.patch(["themeAccent": "auto", "themeBackground": "auto"]) } }
                 Divider().overlay(colors.foreground.opacity(0.28))
-                NavigationLink { NativeVolcAsrSettingsView(model: model) } label: {
+                NavigationLink { NativeVoiceInputSettingsView(model: model) } label: {
                     HStack {
                         VStack(alignment: .leading, spacing: 6) {
                             Text("语音输入").font(.headline)
-                            Text(voiceConfigured ? "火山 ASR · 已配置" : "配置火山 ASR · 按住输入框说话").font(.caption)
+                            Text(voiceConfigured ? "豆包输入法非官方 ASR · 默认服务" : "语音输入已关闭").font(.caption)
                         }
                         Spacer(); Image(systemName: "chevron.right")
                     }.padding(.vertical, 8)
@@ -1099,16 +1111,9 @@ private struct NativeGeneralSettingsView: View {
     }
 
     private var voiceConfigured: Bool {
-
         let value = model.settings["voiceInput"] as? [String: Any] ?? [:]
-
-        return !model.string(value, "apiKey").isEmpty ||
-
-            (!model.string(value, "appId").isEmpty && !model.string(value, "accessKey").isEmpty)
-
+        return value["enabled"] as? Bool ?? true
     }
-
-
 
     private var languageBinding: Binding<String> {
 
@@ -1152,163 +1157,57 @@ private struct NativeGeneralSettingsView: View {
 
 
 
-private struct NativeVolcAsrSettingsView: View {
-
+private struct NativeVoiceInputSettingsView: View {
     @ObservedObject var model: NativeSettingsModel
-
     @Environment(\.dismiss) private var dismiss
-
-    @State private var apiKey = ""
-    @State private var endpoint = "https://openspeech.bytedance.com/api/v3/auc/bigmodel/recognize/flash"
+    @State private var enabled = true
     @State private var checking = false
     @State private var checkResult: String?
 
-
-    @State private var appId = ""
-
-    @State private var accessKey = ""
-
-    @State private var legacy = false
-
     var body: some View {
-
         NativeAndexForm(model: model) {
-
             Section {
-
-                TextField("服务地址", text: $endpoint).textInputAutocapitalization(.never).autocorrectionDisabled()
-                    .keyboardType(.URL)
-                Toggle("使用旧版 App ID / Access Token", isOn: $legacy)
-
-                if legacy {
-
-                    TextField("App ID", text: $appId).textInputAutocapitalization(.never).autocorrectionDisabled()
-
-                    SecureField("Access Token", text: $accessKey)
-
-                } else {
-
-                    SecureField("API Key", text: $apiKey)
-
-                }
-
-            } footer: {
-
-                Text("使用大模型录音文件识别极速版。松开后将录音发送至火山引擎，识别文字填入草稿，不会自动发送消息。")
-
-            }
-
-            Section {
-
-                LabeledContent("资源 ID", value: "volc.bigasr.auc_turbo").font(.caption)
-
-                Text("首次使用需允许麦克风权限。单次最长录音 60 秒，上滑取消。")
-
+                Toggle("启用语音输入", isOn: $enabled)
+                Text("豆包输入法非官方 ASR").font(.headline)
+                Text("按住说话时持续上传音频，中间文字仅预览；松手后等待最终整句，一次性填入草稿，不会自动发送消息。")
+                Text("无需 API Key。录音直接发送到豆包输入法在线服务，凭据保存于本机钥匙串，不长期保存音频。非官方接入，可用性和额度由服务端决定。")
                     .font(.footnote).foregroundStyle(.secondary)
-
-                Button(checking ? "正在检测…" : "检测连接") { Task { await testConnection() } }.disabled(checking)
+            }
+            Section {
+                Text("首次使用需允许麦克风权限。单次最长 60 秒，上滑取消；唤起键盘后可长按粘贴。")
+                    .font(.footnote).foregroundStyle(.secondary)
+                Button(checking ? "正在检测…" : "检测连接") { Task { await testConnection() } }
+                    .disabled(checking || !enabled)
                 if let checkResult { Text(checkResult).font(.footnote) }
-                Text("检测会发送一段短静音以校验地址、鉴权和资源权限。").font(.caption)
-                Button("清除配置并停用", role: .destructive) { save(clear: true) }
-
+                Text("检测仅确认连接与鉴权，实际识别请在对话中按住说话。").font(.caption)
             }
-
         }
-
-        .navigationTitle("火山 ASR").navigationBarTitleDisplayMode(.inline)
-
+        .navigationTitle("语音输入").navigationBarTitleDisplayMode(.inline)
         .toolbar {
-
             ToolbarItem(placement: .confirmationAction) {
-
-                Button("保存") { save(clear: false) }
-
-                    .disabled(legacy ? appId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
-
-                              accessKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty :
-
-                                apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-
+                Button("保存") { model.patch(["voiceInput": ["enabled": enabled]]); dismiss() }
             }
-
         }
-
         .onAppear {
-
             let config = model.settings["voiceInput"] as? [String: Any] ?? [:]
-
-            apiKey = model.string(config, "apiKey"); appId = model.string(config, "appId"); accessKey = model.string(config, "accessKey")
-
-            endpoint = model.string(config, "endpoint", fallback: "https://openspeech.bytedance.com/api/v3/auc/bigmodel/recognize/flash")
-            legacy = apiKey.isEmpty && !appId.isEmpty
-
+            enabled = config["enabled"] as? Bool ?? true
         }
-
     }
-
     @MainActor private func testConnection() async {
-        guard let url = URL(string: endpoint.trimmingCharacters(in: .whitespacesAndNewlines)), url.scheme == "https" else {
-            checkResult = "服务地址需使用 HTTPS。"; return
-        }
-        guard legacy ? !appId.isEmpty && !accessKey.isEmpty : !apiKey.isEmpty else {
-            checkResult = "请填写完整的 ASR 凭据。"; return
-        }
         checking = true; checkResult = nil
         defer { checking = false }
+        let client = IosOnlineVoiceBindings.shared.newClient()
+        defer { client.close() }
         do {
-            var wav = Data(repeating: 0, count: 8044)
-            func text(_ offset: Int, _ value: String) { wav.replaceSubrange(offset..<(offset + value.utf8.count), with: value.utf8) }
-            func number(_ offset: Int, _ value: Int, _ count: Int) {
-                for i in 0..<count { wav[offset + i] = UInt8((value >> (8 * i)) & 255) }
-            }
-            text(0, "RIFF"); number(4, 8036, 4); text(8, "WAVEfmt ")
-            number(16, 16, 4); number(20, 1, 2); number(22, 1, 2); number(24, 16000, 4)
-            number(28, 32000, 4); number(32, 2, 2); number(34, 16, 2); text(36, "data"); number(40, 8000, 4)
-            var request = URLRequest(url: url, timeoutInterval: 30)
-            request.httpMethod = "POST"
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            if legacy {
-                request.setValue(appId.trimmingCharacters(in: .whitespacesAndNewlines), forHTTPHeaderField: "X-Api-App-Key")
-                request.setValue(accessKey.trimmingCharacters(in: .whitespacesAndNewlines), forHTTPHeaderField: "X-Api-Access-Key")
-            } else { request.setValue(apiKey.trimmingCharacters(in: .whitespacesAndNewlines), forHTTPHeaderField: "X-Api-Key") }
-            request.setValue("volc.bigasr.auc_turbo", forHTTPHeaderField: "X-Api-Resource-Id")
-            request.setValue(UUID().uuidString, forHTTPHeaderField: "X-Api-Request-Id")
-            request.setValue("-1", forHTTPHeaderField: "X-Api-Sequence")
-            request.httpBody = try JSONSerialization.data(withJSONObject: [
-                "user": ["uid": "andex-voice"], "audio": ["data": wav.base64EncodedString()],
-                "request": ["model_name": "bigmodel", "enable_punc": true]
-            ])
-            let (_, response) = try await URLSession.shared.data(for: request)
-            let http = response as? HTTPURLResponse
-            let code = http?.value(forHTTPHeaderField: "X-Api-Status-Code") ?? "未知"
-            if let status = http?.statusCode, (200..<300).contains(status), ["20000000", "20000003"].contains(code) {
-                checkResult = "连接正常 · 鉴权和语音资源可用"
-            } else { checkResult = "检测失败（HTTP \(http?.statusCode ?? 0)，状态 \(code)）。请检查地址、密钥和语音资源权限。" }
-        } catch { checkResult = "检测失败，请检查网络连接。" }
+            _ = try await client.probe()
+            checkResult = "连接与鉴权正常"
+        } catch {
+            let message = error.localizedDescription
+            checkResult = message.contains("没有识别到完整语音")
+                ? "连接与鉴权正常 · 静音检测无识别文本" : message
+        }
     }
-
-    private func save(clear: Bool) {
-
-        model.patch(["voiceInput": [
-
-            "apiKey": clear || legacy ? "" : apiKey.trimmingCharacters(in: .whitespacesAndNewlines),
-
-            "appId": clear || !legacy ? "" : appId.trimmingCharacters(in: .whitespacesAndNewlines),
-
-            "accessKey": clear || !legacy ? "" : accessKey.trimmingCharacters(in: .whitespacesAndNewlines),
-
-            "resourceId": "volc.bigasr.auc_turbo",
-            "endpoint": endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        ]])
-
-        dismiss()
-
-    }
-
 }
-
-
 
 private struct NativeRole: Codable, Identifiable {
 
@@ -1498,6 +1397,11 @@ private struct NativeRoleEditor: View {
 
                 PhotosPicker("选择头像", selection: $photo, matching: .images)
 
+                HStack {
+                    Spacer()
+                    Button("清空") { role.prompt = "" }
+                    Button("粘贴") { if let text = UIPasteboard.general.string { role.prompt = text } }
+                }
                 TextEditor(text: $role.prompt).frame(minHeight: 220)
 
             }
@@ -5546,10 +5450,6 @@ private struct NativeAboutSettingsView: View {
 
                 Text("Andex").font(.largeTitle.bold())
 
-                Text(model.text("Release \(version)", "正式版 \(version)", "نسخه \(version)"))
-
-                    .font(.subheadline).foregroundStyle(.secondary)
-
                 VStack(spacing: 0) {
 
                     aboutRow(model.text("Author", "作者"), "Yukie")
@@ -5557,14 +5457,6 @@ private struct NativeAboutSettingsView: View {
                     Divider().padding(.leading, 16)
 
                     aboutRow(model.text("Version", "版本"), version)
-
-                    Divider().padding(.leading, 16)
-
-                    Link(destination: URL(string: "https://andex.baimoqilin.com")!) {
-
-                        linkRow(model.text("Website", "网站"), "globe")
-
-                    }
 
                     Divider().padding(.leading, 16)
 
@@ -5576,7 +5468,7 @@ private struct NativeAboutSettingsView: View {
 
                     Divider().padding(.leading, 16)
 
-                    Link(destination: URL(string: "https://github.com/tangnanbai/Andex/wiki/Privacy-Policy")!) {
+                    Link(destination: URL(string: "https://github.com/tangnanbai/Andex/blob/main/docs/privacy-policy.md")!) {
 
                         linkRow(model.text("Privacy Policy", "隐私政策"), "hand.raised")
 
@@ -5992,6 +5884,44 @@ private struct NativeExtensionForm: View {
 
 
 
+private struct NativeMemoryContentCard: View {
+    let title: String
+    let value: String
+    let editable: Bool
+    var delete: (() -> Void)? = nil
+    let save: (String, String) -> Void
+    @State private var expanded = false
+    @State private var editing = false
+    @State private var draft = ""
+    @State private var previous = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Button { expanded.toggle() } label: {
+                HStack { Text(title); Spacer(); Text(expanded ? "收起" : "查看").font(.caption) }
+            }.buttonStyle(.plain)
+            if editing {
+                TextEditor(text: $draft).frame(minHeight: 140, maxHeight: 280)
+                HStack {
+                    Button("保存") { save(draft, previous) }.disabled(draft == previous)
+                    Button("取消") { editing = false }
+                }
+            } else if expanded {
+                ScrollView { Text(value.isEmpty ? "暂无记忆" : value).textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading) }.frame(maxHeight: 280)
+                HStack {
+                    if editable { Button("编辑") { draft = value; previous = value; editing = true } }
+                    if let delete { Button("删除", action: delete) }
+                }
+            } else {
+                Text(value.isEmpty ? "暂无记忆" : String(value.prefix(240))).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+            }
+        }.onChange(of: value) { _, next in
+            if editing && next != previous && next == draft { editing = false }
+        }
+    }
+}
+
 private struct NativeExtensionControl: View {
 
     @ObservedObject var model: NativeSettingsModel
@@ -6160,10 +6090,11 @@ private struct NativeExtensionControl: View {
 
         case "action-row", "chips":
 
-            ForEach(setting["actions"] as? [[String: Any]] ?? [], id: \.nativeID) { item in
-
-                categoryLinkOrButton(item, label: model.string(item, "label"))
-
+            HStack(spacing: 12) {
+                ForEach(setting["actions"] as? [[String: Any]] ?? [], id: \.nativeID) { item in
+                    categoryLinkOrButton(item, label: model.string(item, "label"))
+                        .frame(maxWidth: .infinity)
+                }
             }
 
         case "item-card", "card":
@@ -6219,15 +6150,35 @@ private struct NativeExtensionControl: View {
             LabeledContent(label, value: model.string(setting, "value", fallback: subtitle))
 
         case "result-card", "callout":
-
-            VStack(alignment: .leading, spacing: 4) {
+            if setting["expanded"] != nil || !model.string(setting, "editAction").isEmpty {
+                NativeMemoryContentCard(title: label, value: model.string(setting, "text"),
+                    editable: !model.string(setting, "editAction").isEmpty,
+                    delete: model.string(setting, "deleteAction").isEmpty ? nil : {
+                        model.perform("extension_action", ["extension_id": model.string(page, "extensionId"),
+                            "action": model.string(setting, "deleteAction"), "args": [:]])
+                    }) { content, previous in
+                        model.perform("extension_action", [
+                            "extension_id": model.string(page, "extensionId"),
+                            "action": model.string(setting, "editAction"),
+                            "args": ["content": content, "previous": previous],
+                        ])
+                    }
+            } else { VStack(alignment: .leading, spacing: 4) {
 
                 if !label.isEmpty { Text(label).font(.headline) }
 
-                Text(model.string(setting, "text", fallback: model.string(setting, "value"))).foregroundStyle(.secondary)
+                if model.bool(setting, "scrollable") {
+                    ScrollView {
+                        Text(model.string(setting, "text", fallback: model.string(setting, "value")))
+                            .foregroundStyle(.secondary).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+                    }.frame(maxHeight: 260)
+                } else {
+                    Text(model.string(setting, "text", fallback: model.string(setting, "value"))).foregroundStyle(.secondary)
+                }
 
             }
 
+            }
         case "divider":
 
             Divider()

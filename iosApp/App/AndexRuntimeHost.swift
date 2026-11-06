@@ -1560,6 +1560,49 @@ final class AndexRuntimeHost: NSObject, NativeRuntimeHost, UIDocumentPickerDeleg
                 try runtime.writeFile(targetGuestPath, data: data, executable: false)
             }
         }
+        try upgradeBundledMemory(source: sourceDir.appendingPathComponent("pi-long-memory"))
+    }
+
+    private func upgradeBundledMemory(source: URL) throws {
+        let originals = [
+            "andex.ts": "fb1923d5758da0f296d0a85c56a0606958390df1c8f521fa6cc465ceb946201b",
+            "store.ts": "96595d81e7190eb85d2922c95e18462338830eeb661bd569d8f057359e168808",
+            "package.json": "d2424fb5f54c9596124d08dee3254056c89c33309d0492e3c081082fc9f25c78",
+        ]
+        // Inspect every parent without following symbolic links.
+        var parent = "/"
+        for name in ["root", ".andex", "extensions", "pi-long-memory"] {
+            guard let entry = try runtime.listDirectory(parent).first(where: { $0["name"] as? String == name }),
+                  entry["directory"] as? Bool == true, entry["symbolicLink"] as? Bool == false else { return }
+            parent = (parent as NSString).appendingPathComponent(name)
+        }
+        if let markers = try? runtime.listDirectory("/root/.andex/.removed-preinstalled-extensions"),
+           markers.contains(where: { $0["name"] as? String == "pi-long-memory" }) { return }
+        let entries = try runtime.listDirectory(parent)
+        func hash(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
+        var updates: [(String, Data)] = []
+        for (name, original) in originals {
+            guard let entry = entries.first(where: { $0["name"] as? String == name }),
+                  entry["symbolicLink"] as? Bool == false, entry["directory"] as? Bool == false,
+                  ((entry["mode"] as? NSNumber)?.intValue ?? 0) & 0xF000 == 0x8000 else { return }
+            let target = "\(parent)/\(name)"
+            let current = hash(try runtime.readFile(target, maximumBytes: 2_097_152))
+            let bundled = try Data(contentsOf: source.appendingPathComponent(name))
+            let next = hash(bundled)
+            let compatible: [String: Set<String>] = [
+                "andex.ts": ["660bcc7b85c9af236abc5bfc1a624286546e4404c188b7211d60d8e86fc21ce5", "1601f2e951bd7f365b44ff286686a3c0a9e813c137b3c9e3c41b261f1928d4cd"],
+                "store.ts": ["a75b88005d05bd0be4979a836e7c8fa6c1494d4dfed2dd522b0663c0aabce1be",
+                    "b899b70a0800504ddbd4b40e0e615003a4daa174733361bdb0773142ef20a3c6", "1c3380ce9af10fd0ae823b0b95ec040b0bb1dd2812b21a8e159c488086a9b3e9"],
+            ]
+            guard current == original || current == next || compatible[name]?.contains(current) == true else { return }
+            if current != next { updates.append((target, bundled)) }
+        }
+        for (target, data) in updates {
+            let temporary = "\(parent)/.andex-upgrade-\(UUID().uuidString)"
+            try runtime.writeFile(temporary, data: data, executable: false)
+            do { try runtime.movePath(temporary, toPath: target) }
+            catch { try? runtime.removePath(temporary, recursive: false); throw error }
+        }
     }
 
     private func installNodeCompatibilityAssets() throws {

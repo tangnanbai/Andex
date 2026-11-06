@@ -970,7 +970,7 @@ function writeSuccessfulChatCompletion(response, content, model, inputTokens = 4
   })}\n\n`);
   response.end("data: [DONE]\n\n");
 }
-test("long memory freezes session snapshots, persists and respects disabling", async (t) => {
+test("long memory refreshes each turn, persists and respects disabling", async (t) => {
   const home = await mkdtemp(join(tmpdir(), "andex-long-memory-"));
   const memoryDir = join(home, ".andex", "memory");
   await mkdir(memoryDir, { recursive: true });
@@ -1000,11 +1000,12 @@ test("long memory freezes session snapshots, persists and respects disabling", a
   assert.ok(requests.at(-1).tools.some(tool => tool.function.name === "memory"));
   await writeFile(join(memoryDir, "USER.md"), "User prefers detailed English replies.");
   await run("first");
-  assert.ok(JSON.stringify(requests.at(-1).messages).includes("concise Chinese"));
+  assert.ok(JSON.stringify(requests.at(-1).messages).includes("detailed English"));
+  assert.equal(JSON.stringify(requests.at(-1).messages).includes("concise Chinese"), false);
   await run("second");
   assert.ok(JSON.stringify(requests.at(-1).messages).includes("detailed English"));
   await writeFile(join(memoryDir, "config.json"), JSON.stringify({ enabled: false }));
-  await run("third");
+  await run("first");
   assert.equal(JSON.stringify(requests.at(-1).messages).includes("detailed English"), false);
 });
 test("native agent automatically compacts at 80 percent and flushes durable memory first", async (t) => {
@@ -1046,6 +1047,11 @@ test("native agent automatically compacts at 80 percent and flushes durable memo
   assert.ok(client.events.some(event => event.event === "compaction_end" && !event.payload?.error_message));
   assert.ok(requests.some(body => JSON.stringify(body.messages).includes("Extract only durable user facts")));
   assert.match(await readFile(join(home, ".andex", "memory", "USER.md"), "utf8"), /Chinese/);
+  const summaries = JSON.parse(await readFile(join(home, ".andex", "memory", "compactions.json"), "utf8"));
+  assert.ok(summaries.some(entry => entry.summary.includes("persistent memory")));
+  const count = client.events.filter(event => event.event === "compaction_start").length;
+  await client.request("repeat-boundary", "run_turn", { ...payload, messages: [userMessage("More durable task information. ".repeat(450))] }, 20_000);
+  assert.ok(client.events.filter(event => event.event === "compaction_start").length > count);
 });
 function hostTool(name, executionMode = "parallel") {
   return {
