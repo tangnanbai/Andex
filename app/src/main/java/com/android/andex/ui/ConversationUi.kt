@@ -180,6 +180,8 @@ import com.android.andex.data.McpTransportConfig
 import com.android.andex.data.ModelCatalogInfo
 import com.android.andex.data.PendingSessionInput
 import com.android.andex.data.ProviderModelOption
+import com.android.andex.data.modelMentionQuery
+import com.android.andex.data.mentionToken
 import com.android.andex.data.SessionExecutionState
 import com.android.andex.data.SessionFollowUpMode
 import com.android.andex.data.quickActionLabel
@@ -811,6 +813,7 @@ fun ConversationScreen(
                 onNewChat = onNewChat,
             )
             ConversationComposerOverlay(
+                modelOptions = modelOptions,
                 contextDetail = contextDetail,
                 modifier = Modifier.align(Alignment.BottomCenter),
                 conversationStateKey = conversationStateKey,
@@ -1308,13 +1311,13 @@ private fun ConversationModelListMenu(
                 .verticalScroll(rememberScrollState()),
             horizontalAlignment = Alignment.Start,
         ) {
-            options.forEach { option ->
-                ConversationModelMenuRow(
-                    label = option.modelId,
-                    catalogInfo = modelCatalogInfo[option.key],
-                    selected = option.key == selectedOption?.key,
-                    onClick = { onSelected(option) },
-                )
+            options.groupBy { it.providerConfigId }.values.forEach { models ->
+                Text(models.first().providerName, Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                    style = MaterialTheme.typography.labelSmall, color = AndexOnSurfaceVariant)
+                models.forEach { option ->
+                    ConversationModelMenuRow(label = option.modelId, catalogInfo = modelCatalogInfo[option.key],
+                        selected = option.key == selectedOption?.key, onClick = { onSelected(option) })
+                }
             }
         }
     }
@@ -2249,6 +2252,7 @@ private fun PendingSessionInputBubble(
 }
 @Composable
 private fun ConversationComposerOverlay(
+    modelOptions: List<ProviderModelOption>,
     contextDetail: ContextUsageDetails,
     modifier: Modifier = Modifier,
     conversationStateKey: String,
@@ -2316,6 +2320,7 @@ private fun ConversationComposerOverlay(
                 )
                 key(conversationStateKey) {
                     ConversationComposerBar(
+                    modelOptions = modelOptions,
                         contextDetail = contextDetail,
                     conversationStateKey = conversationStateKey,
                     value = value,
@@ -2364,6 +2369,7 @@ private fun ConversationComposerOverlay(
 }
 @Composable
 private fun ConversationComposerBar(
+    modelOptions: List<ProviderModelOption>,
     contextDetail: ContextUsageDetails,
     modifier: Modifier = Modifier,
     conversationStateKey: String,
@@ -2461,7 +2467,7 @@ private fun ConversationComposerBar(
         hasSelectedActions -> stringResource(R.string.chat_ask_with_selected_tools)
         else -> stringResource(R.string.chat_ask_andex)
     }
-    val hasDraft = value.isNotBlank() || attachments.isNotEmpty()
+    val hasDraft = com.android.andex.data.stripModelMentions(value).isNotBlank() || attachments.isNotEmpty()
     val slashSuggestions = remember(fieldValue.text) {
         slashCommandSuggestions(fieldValue.text)
     }
@@ -2530,6 +2536,14 @@ private fun ConversationComposerBar(
             .padding(horizontal = composerHorizontalPadding),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
+        ModelMentionSuggestions(modelOptions, modelMentionQuery(fieldValue.text, fieldValue.selection.end)) { option ->
+            val query = modelMentionQuery(fieldValue.text, fieldValue.selection.end)
+            if (query != null) {
+                val next = fieldValue.text.replaceRange(query.start, query.end, option.mentionToken() + " ")
+                fieldValue = TextFieldValue(next, TextRange(query.start + option.mentionToken().length + 1))
+                onValueChange(next)
+            }
+        }
         if (showTermuxSetupNotice) {
             TermuxSetupNotice(
                 setupState = termuxSetupState,

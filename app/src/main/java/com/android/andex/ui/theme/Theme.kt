@@ -1,5 +1,6 @@
 package com.android.andex.ui.theme
 
+import com.android.andex.applyAndexWindowBackground
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
@@ -196,8 +197,9 @@ fun AndexTheme(
             }
             (context as? android.app.Activity)?.let { activity ->
                 val color = AndexBackground.toArgb()
-                activity.window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(color))
-                activity.window.decorView.setBackgroundColor(color)
+                if ((activity.window.decorView.background as? android.graphics.drawable.ColorDrawable)?.color != color) {
+                    activity.applyAndexWindowBackground(color)
+                }
                 val preferences = activity.getSharedPreferences("window_appearance", android.content.Context.MODE_PRIVATE)
                 if (preferences.getInt("background", 0) != color) preferences.edit().putInt("background", color).apply()
                 androidx.core.view.WindowCompat.getInsetsController(activity.window, view).apply {

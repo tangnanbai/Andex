@@ -1576,6 +1576,8 @@ import com.android.andex.data.LocalRuntimeId
 
 
 import com.android.andex.data.ProviderModelOption
+import com.android.andex.data.modelMentionQuery
+import com.android.andex.data.mentionToken
 
 
 
@@ -15213,7 +15215,7 @@ fun IosComposeApp(
 
 
 
-            if (value.isEmpty() && attachments.isEmpty()) return
+            if (com.android.andex.data.stripModelMentions(value).isEmpty() && attachments.isEmpty()) return
 
 
 
@@ -15397,7 +15399,13 @@ fun IosComposeApp(
 
 
 
-            val config = resolveProviderForModel(requestedKey, fallbackModelKey)
+            val mention = try {
+                com.android.andex.data.resolveModelMention(value, modelOptions)
+            } catch (error: IllegalArgumentException) {
+                transientMessage = error.message.orEmpty()
+                return
+            }
+            val config = resolveProviderForModel(mention?.key ?: requestedKey, fallbackModelKey)
 
 
 
@@ -32302,125 +32310,7 @@ fun IosComposeApp(
 
 
 
-        if (transientMessage.isNotBlank()) {
-
-
-
-
-
-
-
-            Popup(
-
-
-
-
-
-
-
-                alignment = Alignment.BottomCenter,
-
-
-
-
-
-
-
-                properties = PopupProperties(focusable = false),
-
-
-
-
-
-
-
-            ) {
-
-
-
-
-
-
-
-                Text(
-
-
-
-
-
-
-
-                    text = transientMessage,
-
-
-
-
-
-
-
-                    color = Color.White,
-
-
-
-
-
-
-
-                    style = MaterialTheme.typography.bodySmall,
-
-
-
-
-
-
-
-                    modifier = Modifier.navigationBarsPadding().padding(horizontal = 32.dp, vertical = 48.dp)
-
-
-
-
-
-
-
-                        .clip(RoundedCornerShape(24.dp)).background(Color(0xE6323232))
-
-
-
-
-
-
-
-                        .padding(horizontal = 14.dp, vertical = 10.dp),
-
-
-
-
-
-
-
-                )
-
-
-
-
-
-
-
-            }
-
-
-
-
-
-
-
-        }
-
-
-
-
-
-
+        VoiceToast(transientMessage.takeIf { it.isNotBlank() })
 
         if (!startupResolved) {
 
@@ -49129,6 +49019,7 @@ private fun SharedChatScreen(
 
 
                 SharedComposer(
+                    modelOptions = modelOptions,
                     contextUsage = contextUsage,
 
 
@@ -53449,7 +53340,7 @@ private fun SharedConversationModelListMenu(
 
 
 
-        val modelListHeight = (options.size * 42).coerceAtMost(312).dp
+        val modelListHeight = (options.size * 42 + options.map { it.providerConfigId }.distinct().size * 32).coerceAtMost(312).dp
 
 
 
@@ -53481,7 +53372,10 @@ private fun SharedConversationModelListMenu(
 
 
 
-            items(options, key = ProviderModelOption::key) { option ->
+            options.groupBy { it.providerConfigId }.forEach { (id, models) ->
+                item("group-$id") { Text(models.first().providerName, Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                    style = MaterialTheme.typography.labelSmall, color = AndexOnSurfaceVariant) }
+            items(models, key = ProviderModelOption::key) { option ->
 
 
 
@@ -53537,6 +53431,7 @@ private fun SharedConversationModelListMenu(
 
 
 
+            }
             }
 
 
@@ -55034,6 +54929,7 @@ private fun sharedReasoningEffortLabel(effort: String): String = when (effort.tr
 
 
 private fun SharedComposer(
+    modelOptions: List<ProviderModelOption>,
     contextUsage: ContextUsageDetails,
 
 
@@ -55698,7 +55594,7 @@ private fun SharedComposer(
 
 
 
-    val hasDraft = value.isNotBlank() || attachments.isNotEmpty()
+    val hasDraft = com.android.andex.data.stripModelMentions(value).isNotBlank() || attachments.isNotEmpty()
 
 
 
@@ -57442,6 +57338,14 @@ private fun SharedComposer(
 
 
 
+                ModelMentionSuggestions(modelOptions, modelMentionQuery(fieldValue.text, fieldValue.selection.end)) { option ->
+                    val query = modelMentionQuery(fieldValue.text, fieldValue.selection.end)
+                    if (query != null) {
+                        val next = fieldValue.text.replaceRange(query.start, query.end, option.mentionToken() + " ")
+                        fieldValue = TextFieldValue(next, TextRange(query.start + option.mentionToken().length + 1))
+                        onValueChange(next)
+                    }
+                }
                 AnimatedVisibility(
 
 

@@ -14,6 +14,7 @@ import android.os.Build
 import android.provider.Settings
 import android.view.*
 import android.widget.*
+import com.android.andex.ui.AndexToast as Toast
 import org.json.JSONObject
 import kotlin.math.abs
 

@@ -16304,6 +16304,12 @@ class AndexViewModel(
 
 
 
+        val mentionedModel = try {
+            com.android.andex.data.resolveModelMention(content, snapshot.providerConfigs.availableModelOptions())
+        } catch (error: IllegalArgumentException) {
+            emitTransientMessage(UiText.Raw(error.message.orEmpty()))
+            return
+        }
         val attachments = snapshot.draftAttachments
 
 
@@ -16312,7 +16318,7 @@ class AndexViewModel(
 
 
 
-        if (content.isEmpty() && attachments.isEmpty()) return
+        if (com.android.andex.data.stripModelMentions(content).isEmpty() && attachments.isEmpty()) return
 
 
 
@@ -16424,7 +16430,7 @@ class AndexViewModel(
 
 
 
-            if (!sessionExecutionManager.submitFollowUp(targetSessionId, userMessage, runningFollowUpMode)) {
+            if (!sessionExecutionManager.submitFollowUp(targetSessionId, userMessage, if (mentionedModel != null) SessionFollowUpMode.Queue else runningFollowUpMode)) {
 
 
 

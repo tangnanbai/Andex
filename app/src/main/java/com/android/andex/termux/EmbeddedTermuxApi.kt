@@ -13,7 +13,7 @@ import android.os.Environment
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.provider.Settings
-import android.widget.Toast
+import com.android.andex.ui.AndexToast as Toast
 import java.io.BufferedInputStream
 import java.net.InetAddress
 import java.net.ServerSocket

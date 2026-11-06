@@ -2992,3 +2992,37 @@ test("rejects unsupported custom Pi APIs", async () => {
     );
   }
 });
+
+test("image model turn saves binary and references in persistent conversation", async (t) => {
+  const home = await mkdtemp(join(tmpdir(), "andex-image-turn-"));
+  const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jQ1sAAAAASUVORK5CYII=";
+  const requests = [];
+  const server = createServer((request, response) => {
+    const chunks = [];
+    request.on("data", c => chunks.push(c));
+    request.on("end", () => {
+      requests.push({ url: request.url, body: JSON.parse(Buffer.concat(chunks).toString()) });
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ data: [{ b64_json: png }], usage: { input_tokens: 3, output_tokens: 5, total_tokens: 8 } }));
+    });
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  const client = new BridgeClient({ HOME: home, USERPROFILE: home });
+  t.after(async () => { await client.close(); await new Promise(resolve => server.close(resolve)); await rm(home, { recursive: true, force: true }); });
+  const config = { provider_type: "openai_compatible", provider_config_id: "image-test", pi_provider_id: "andex-image-test",
+    pi_api: "openai-completions", model_id: "gpt-image-2", base_url: `http://127.0.0.1:${server.address().port}/v1`, api_key: "test-key" };
+  const result = await client.request("image-turn", "run_turn", {
+    ...turnPayload("image-conversation", [userMessage("@「test / gpt-image-2」 draw a circle")], config), workspace_directory: home,
+  }, 30_000);
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].url, "/v1/images/generations");
+  assert.equal(requests[0].body.prompt, "draw a circle");
+  const match = result.assistant_text.match(/!\[生成图片 1\]\((.+)\)/);
+  assert.ok(match, result.assistant_text);
+  assert.equal((await readFile(match[1])).toString("base64"), png);
+  const history = await readFile(result.session_file, "utf8");
+  assert.ok(history.includes("draw a circle"));
+  assert.ok(history.includes("生成图片"));
+  assert.equal(history.includes(png), false);
+  assert.ok(client.events.some(e => e.event === "assistant_text_delta"));
+});

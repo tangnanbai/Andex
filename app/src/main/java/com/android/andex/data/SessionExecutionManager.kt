@@ -2004,7 +2004,7 @@ class SessionExecutionManager(
 
 
 
-                    request = nextRequest,
+                    originalRequest = nextRequest,
 
 
 
@@ -2204,7 +2204,7 @@ class SessionExecutionManager(
 
 
 
-        request: SessionTurnRequest,
+        originalRequest: SessionTurnRequest,
 
 
 
@@ -2212,6 +2212,13 @@ class SessionExecutionManager(
 
 
 
+        val mentionedModel = resolveModelMention(
+            originalRequest.requestMessages.lastOrNull { it.author == MessageAuthor.User }?.text.orEmpty(),
+            originalRequest.providerConfigs.availableModelOptions(),
+        )
+        val request = if (mentionedModel == null) originalRequest else originalRequest.copy(
+            settings = originalRequest.settings.withModelOption(mentionedModel),
+        )
         val turnStartedAtMillis = System.currentTimeMillis()
 
 

@@ -129,6 +129,19 @@ internal fun SharedAndexTheme(
     }
     val accessibility = rememberPlatformAccessibilityPreferences()
     updateAndexPalette(darkTheme, accessibility.increasedContrast, themeAccent, themeBackground)
+    val controller = androidx.compose.ui.uikit.LocalUIViewController.current
+    val canvas = com.android.andex.ui.theme.AndexBackground
+    SideEffect {
+        val background = platform.UIKit.UIColor(red = canvas.red.toDouble(), green = canvas.green.toDouble(),
+            blue = canvas.blue.toDouble(), alpha = 1.0)
+        controller.view.backgroundColor = background
+        var parent = controller.parentViewController
+        while (parent != null) {
+            parent.view.backgroundColor = background
+            parent = parent.parentViewController
+        }
+        controller.view.window?.backgroundColor = background
+    }
     val layoutDirection = if (language == AppLanguage.Persian) {
         LayoutDirection.Rtl
     } else {

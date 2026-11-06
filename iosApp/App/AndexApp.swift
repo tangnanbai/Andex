@@ -252,7 +252,7 @@ private final class FullscreenComposeViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = .clear
+        view.backgroundColor = .black
 
         addChild(content)
         content.view.translatesAutoresizingMaskIntoConstraints = false
@@ -273,6 +273,8 @@ private final class FullscreenComposeViewController: UIViewController {
         // Compose can otherwise retain the keyboard frame from the previous
         // orientation and keep bottom IME insets after the keyboard disappears.
         view.endEditing(true)
+        view.backgroundColor = content.view.backgroundColor ?? .black
+        view.window?.backgroundColor = view.backgroundColor
         super.viewWillTransition(to: size, with: coordinator)
 
         coordinator.animate(alongsideTransition: nil) { [weak self] _ in

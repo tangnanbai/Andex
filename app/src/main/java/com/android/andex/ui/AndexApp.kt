@@ -9,7 +9,7 @@ import android.content.Context
 import android.net.Uri
 import android.provider.Settings
 import android.util.Patterns
-import android.widget.Toast
+import com.android.andex.ui.AndexToast as Toast
 import androidx.activity.compose.BackHandler
 import com.android.andex.AndexLocaleManager
 import com.android.andex.R

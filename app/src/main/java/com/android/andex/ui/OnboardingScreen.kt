@@ -1,6 +1,6 @@
 package com.android.andex.ui
 
-import android.widget.Toast
+import com.android.andex.ui.AndexToast as Toast
 import androidx.annotation.DrawableRes
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility

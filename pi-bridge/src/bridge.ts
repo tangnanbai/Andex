@@ -1,3 +1,5 @@
+import { generateImages, isImageGenerationModel } from "./image-generation.js";
+import { randomUUID } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { automaticCompactionSettings } from "./context-policy.js";
 import { persistentMemoryExtension } from "./persistent-memory.js";
@@ -2917,9 +2919,59 @@ async function runNativeAgentPrompt(
     state.lastAccessedAt = Date.now();
   }
 }
+async function runImageTurn(id: string, state: AgentSessionState, config: ModelConfig,
+  text: string, images: ImageContent[]): Promise<AssistantMessage> {
+  const controller = new AbortController();
+  const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(config.timeout_ms ?? 360_000)]);
+  state.currentRequestId = id;
+  activeAborters.set(id, () => controller.abort());
+  resetTurnUsage(state);
+  const started = Date.now();
+  const savedPaths: string[] = [];
+  try {
+    writeEvent(id, "assistant_request_start");
+    const result = await generateImages(config, text, images, signal);
+    const directory = path.join(state.workspaceDirectory, ".andex-generated");
+    if (state.runtime === "termux") await requestRuntimeOperation(state, "mkdir", { path: runtimePath(state, directory), recursive: true }, { signal });
+    else await fs.mkdir(directory, { recursive: true });
+    for (const image of result.images) {
+      signal.throwIfAborted();
+      const file = path.join(directory, `${Date.now()}-${randomUUID()}.${image.extension}`);
+      const visiblePath = runtimePath(state, file);
+      if (state.runtime === "termux") await requestRuntimeOperation(state, "writeFile", { path: visiblePath, atomic: true }, { input: image.bytes, signal });
+      else await fs.writeFile(file, image.bytes);
+      savedPaths.push(visiblePath);
+    }
+    signal.throwIfAborted();
+    const markdown = [result.text, ...savedPaths.map((file, index) => `![生成图片 ${index + 1}](${file.replaceAll(" ", "%20")})`)].filter(Boolean).join("\n\n");
+    const usage = result.usage ?? {};
+    const input = Number(usage.input_tokens ?? usage.promptTokenCount ?? 0);
+    const output = Number(usage.output_tokens ?? usage.candidatesTokenCount ?? 0);
+    const message: AssistantMessage = { role: "assistant", content: [{ type: "text", text: markdown }],
+      api: config.pi_api, provider: config.pi_provider_id, model: config.model_id, stopReason: "stop", timestamp: started,
+      usage: { input, output, cacheRead: 0, cacheWrite: 0, totalTokens: Number(usage.total_tokens ?? usage.totalTokenCount ?? input + output),
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } } };
+    // Persist image references, never base64 blobs, in the same conversation tree.
+    for (const entry of [{ role: "user" as const, content: text, timestamp: started }, message]) {
+      const entryId = state.session.sessionManager.appendMessage(entry);
+      writeEvent(id, "session_entry_appended", { entry: { id: entryId } });
+    }
+    state.session.agent.state.messages = state.session.sessionManager.buildSessionProjection().messages;
+    trackTurnUsage(state, { type: "message_end", message } as AgentSessionEvent);
+    writeEvent(id, "assistant_text_delta", { delta: markdown });
+    return message;
+  } finally {
+    activeAborters.delete(id);
+    if (state.currentRequestId === id) state.currentRequestId = "";
+  }
+}
+
 async function runNativeAgentTurn(id: string, payload: JsonObject): Promise<JsonObject> {
   const messages = normalizeMessages(payload.messages);
   const prompt = promptFromLastUserMessage(messages);
+  const config = normalizeModelConfig(payload.model_config ?? defaultModelConfig);
+  // Mention selection is resolved by the host against configured API channels.
+  prompt.text = prompt.text.replace(/@「[^」\r\n]+」/g, "").trim();
   const { state, reused } = await prepareNativeAgentSession(payload, prompt.history);
   const requestedThinkingLevel = thinkingLevelFor(payload) ?? "off";
   state.session.setThinkingLevel(requestedThinkingLevel);
@@ -2929,7 +2981,9 @@ async function runNativeAgentTurn(id: string, payload: JsonObject): Promise<Json
     effective: state.session.thinkingLevel,
     session_reused: reused,
   });
-  const message = await runNativeAgentPrompt(id, state, prompt.text, prompt.images);
+  const message = isImageGenerationModel(config.model_id)
+    ? await runImageTurn(id, state, config, prompt.text, prompt.images)
+    : await runNativeAgentPrompt(id, state, prompt.text, prompt.images);
   return {
     ...assistantPayload(message),
     usage: turnUsagePayload(state),

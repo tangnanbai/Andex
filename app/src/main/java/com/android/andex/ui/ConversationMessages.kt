@@ -26,7 +26,7 @@ import android.os.SystemClock
 
 
 
-import android.widget.Toast
+import com.android.andex.ui.AndexToast as Toast
 
 
 

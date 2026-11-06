@@ -5885,39 +5885,63 @@ private struct NativeExtensionForm: View {
 
 
 private struct NativeMemoryContentCard: View {
+    @ObservedObject var model: NativeSettingsModel
+    @Environment(\.colorScheme) private var colorScheme
     let title: String
     let value: String
     let editable: Bool
     var delete: (() -> Void)? = nil
     let save: (String, String) -> Void
-    @State private var expanded = false
+    @State private var opened = false
     @State private var editing = false
     @State private var draft = ""
     @State private var previous = ""
+    @State private var pendingAction: (() -> Void)? = nil
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Button { expanded.toggle() } label: {
-                HStack { Text(title); Spacer(); Text(expanded ? "收起" : "查看").font(.caption) }
-            }.buttonStyle(.plain)
-            if editing {
-                TextEditor(text: $draft).frame(minHeight: 140, maxHeight: 280)
+        let colors = NativeAndexColors(model: model, systemScheme: colorScheme)
+        Button { editing = false; opened = true } label: {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack { Text(title); Spacer(); Text("查看").font(.caption) }
+                Text(value.isEmpty ? "暂无记忆" : String(value.prefix(240)))
+                    .font(.caption).foregroundStyle(.secondary).lineLimit(2)
+            }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+        }.buttonStyle(.plain)
+        .fullScreenCover(isPresented: $opened, onDismiss: {
+            let action = pendingAction
+            pendingAction = nil
+            action?()
+        }) {
+            VStack(spacing: 0) {
                 HStack {
-                    Button("保存") { save(draft, previous) }.disabled(draft == previous)
-                    Button("取消") { editing = false }
+                    Button(editing ? "取消" : "返回") {
+                        if editing { editing = false } else { opened = false }
+                    }
+                    Text(title).font(.headline).lineLimit(1).frame(maxWidth: .infinity)
+                    if editing {
+                        Button("保存") {
+                            let content = draft, original = previous
+                            pendingAction = { save(content, original) }
+                            opened = false
+                        }.disabled(draft == previous)
+                    } else {
+                        if editable { Button("编辑") { previous = value; draft = value; editing = true } }
+                        if let delete { Button("删除") { pendingAction = delete; opened = false } }
+                    }
+                }.padding()
+                Divider().overlay(colors.foreground.opacity(0.2))
+                if editing {
+                    TextEditor(text: $draft).scrollContentBackground(.hidden)
+                        .padding(12).background(colors.background)
+                } else {
+                    ScrollView {
+                        Text(value.isEmpty ? "暂无记忆" : value).textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading).padding()
+                    }
                 }
-            } else if expanded {
-                ScrollView { Text(value.isEmpty ? "暂无记忆" : value).textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading) }.frame(maxHeight: 280)
-                HStack {
-                    if editable { Button("编辑") { draft = value; previous = value; editing = true } }
-                    if let delete { Button("删除", action: delete) }
-                }
-            } else {
-                Text(value.isEmpty ? "暂无记忆" : String(value.prefix(240))).font(.caption).foregroundStyle(.secondary).lineLimit(2)
-            }
-        }.onChange(of: value) { _, next in
-            if editing && next != previous && next == draft { editing = false }
+            }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(colors.background.ignoresSafeArea())
+                .foregroundStyle(colors.foreground).tint(colors.accent)
         }
     }
 }
@@ -6151,7 +6175,7 @@ private struct NativeExtensionControl: View {
 
         case "result-card", "callout":
             if setting["expanded"] != nil || !model.string(setting, "editAction").isEmpty {
-                NativeMemoryContentCard(title: label, value: model.string(setting, "text"),
+                NativeMemoryContentCard(model: model, title: label, value: model.string(setting, "text"),
                     editable: !model.string(setting, "editAction").isEmpty,
                     delete: model.string(setting, "deleteAction").isEmpty ? nil : {
                         model.perform("extension_action", ["extension_id": model.string(page, "extensionId"),
