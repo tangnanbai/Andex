@@ -57,13 +57,6 @@ Andex 基于 Aether 二次开发，将内置 Termux 环境、无障碍和 ADB �
 
 欢迎通过本仓库提交问题或合并请求。应用更新检查指向本仓库的 Releases。
 
-## Contributors
-
-<a href="https://github.com/tangnanbai">
-  <img src="https://github.com/tangnanbai.png?size=96" width="64" height="64" alt="Yukie / tangnanbai">
-</a>
-
-**[Yukie（tangnanbai）](https://github.com/tangnanbai)**：Andex 维护与功能开发。
 
 ## 原项目与致谢
 
