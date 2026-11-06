@@ -55,6 +55,14 @@ APK 输出到 `app/build/outputs/apk/debug/app-debug.apk`。具体依赖和 SDK 
 
 欢迎通过本仓库提交问题或合并请求。应用更新检查指向本仓库的 Releases。
 
+## Contributors
+
+<a href="https://github.com/tangnanbai">
+  <img src="https://github.com/tangnanbai.png?size=96" width="64" height="64" alt="Yukie / tangnanbai">
+</a>
+
+**[Yukie（tangnanbai）](https://github.com/tangnanbai)**：Andex 维护与功能开发。
+
 ## 原项目与致谢
 
 本项目基于 **[Zhou-Shilin/Aether](https://github.com/Zhou-Shilin/Aether)** 二次开发，感谢原作者及贡献者。

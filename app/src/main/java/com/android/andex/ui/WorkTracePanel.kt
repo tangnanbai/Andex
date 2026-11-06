@@ -26,12 +26,18 @@ import com.android.andex.ui.theme.*
 internal fun buildWorkTrace(messages: List<ChatMessage>, pendingTools: List<ChatToolInvocation>,
                             pendingBlocks: List<AssistantResponseBlock>, pendingText: String): List<WorkTraceStep> {
     val steps = mutableListOf<WorkTraceStep>()
-    val toolsSeen = mutableSetOf<String>()
+    val toolPositions = mutableMapOf<String, Int>()
     fun tool(tool: ChatToolInvocation) {
-        if (!toolsSeen.add(tool.id)) return
-        val status = if (tool.isRunning) "运行中" else if (tool.outputJson.isBlank()) "已结束" else "有结果"
-        steps += WorkTraceStep("tool:${tool.id}", "${tool.toolName} · $status",
-            "参数\n${tool.argumentsJson}\n\n结果\n${tool.outputJson}", "工具", tool.startedAtMillis, tool.isRunning)
+        val step = WorkTraceStep(
+            "tool:${tool.id}", workTraceToolLabel(tool.toolName, tool.isRunning),
+            "参数\n${tool.argumentsJson}\n\n结果\n${tool.outputJson}", "工具", tool.startedAtMillis, tool.isRunning,
+            toolName = tool.toolName, command = tool.argumentsJson, result = tool.outputJson,
+        )
+        val index = toolPositions[tool.id]
+        if (index == null) {
+            toolPositions[tool.id] = steps.size
+            steps += step
+        } else steps[index] = step
     }
     fun trace(trace: ReasoningTrace) {
         val timeline = trace.chunks.map { it.timelineOrder to it } +
@@ -50,8 +56,10 @@ internal fun buildWorkTrace(messages: List<ChatMessage>, pendingTools: List<Chat
         }
     }
     messages.forEach { message ->
-        if (message.author == MessageAuthor.User && message.text.isNotBlank()) steps += WorkTraceStep("message:${message.id}", message.text,
-            message.text, "输入", message.createdAtMillis)
+        if (message.author == MessageAuthor.User) {
+            val input = message.text.ifBlank { if (message.attachments.isNotEmpty()) "附件消息" else "空消息" }
+            steps += WorkTraceStep("message:${message.id}", input, input, "输入", message.createdAtMillis)
+        }
         message.reasoningTrace?.let(::trace)
         message.toolInvocations.sortedBy { it.timelineOrder }.forEach(::tool)
         if (message.author != MessageAuthor.User && message.text.isNotBlank()) steps += WorkTraceStep("message:${message.id}", message.text,

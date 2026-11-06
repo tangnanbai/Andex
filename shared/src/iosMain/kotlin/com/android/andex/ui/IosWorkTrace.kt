@@ -33,23 +33,41 @@ internal fun SharedRolePicker(settings: AppSettings, onSelected: (String) -> Uni
 }
 
 internal fun buildIosWorkTrace(messages: List<SharedChatMessage>): List<WorkTraceStep> = buildList {
-    val seen = mutableSetOf<String>()
+    val positions = mutableMapOf<String, Int>()
     fun tool(item: SharedChatToolInvocation) {
-        if (seen.add(item.id)) add(WorkTraceStep("tool:${item.id}", item.name,
+        val step = WorkTraceStep("tool:${item.id}", workTraceToolLabel(item.name, item.isRunning),
             "参数\n${item.argumentsJson}\n\n结果\n${item.outputJson.ifBlank { item.output }}",
-            "工具", item.startedAtMillis, item.isRunning))
+            "工具", item.startedAtMillis, item.isRunning,
+            toolName = item.name, command = item.argumentsJson, result = item.outputJson.ifBlank { item.output })
+        val index = positions[item.id]
+        if (index == null) { positions[item.id] = size; add(step) } else set(index, step)
     }
     messages.forEach { message ->
-        if (message.fromUser && message.text.isNotBlank()) add(WorkTraceStep(message.id, message.text, message.text, "输入", message.createdAtMillis))
+        if (message.fromUser) {
+            val input = message.text.ifBlank { if (message.attachments.isNotEmpty()) "附件消息" else "空消息" }
+            add(WorkTraceStep(message.id, input, input, "输入", message.createdAtMillis))
+        }
         message.responseBlocks.forEach { block ->
             when (block) {
                 is SharedAssistantResponseBlock.ToolGroup -> block.tools.forEach(::tool)
                 is SharedAssistantResponseBlock.Reasoning -> {
-                    block.trace.chunks.forEach { chunk -> add(WorkTraceStep(chunk.id,
-                        chunk.title.ifBlank { chunk.detail }, chunk.detail.ifBlank { chunk.rawText }, "记录", chunk.createdAtMillis)) }
-                    block.trace.toolInvocations.forEach(::tool)
+                    val timeline = block.trace.chunks.map { it.timelineOrder to it } +
+                        block.trace.toolInvocations.map { it.timelineOrder to it }
+                    timeline.sortedBy { it.first }.forEach { (_, event) ->
+                        when (event) {
+                            is SharedChatToolInvocation -> tool(event)
+                            is SharedReasoningSummaryChunk -> add(WorkTraceStep("reason:${event.id}",
+                                event.title.ifBlank { event.detail.ifBlank { event.rawText } },
+                                listOf(event.detail, event.rawText).filter { it.isNotBlank() }.distinct().joinToString("\n\n"),
+                                "记录", event.createdAtMillis, event.isPending))
+                        }
+                    }
+                    if (block.trace.chunks.isEmpty() && block.trace.rawText.isNotBlank()) {
+                        add(WorkTraceStep("reason:${block.trace.id}", block.trace.rawText, block.trace.rawText,
+                            "记录", block.trace.startedAtMillis))
+                    }
                 }
-                is SharedAssistantResponseBlock.Status -> add(WorkTraceStep(block.id, block.text, block.detail, "状态"))
+                is SharedAssistantResponseBlock.Status -> add(WorkTraceStep(block.id, block.text, block.detail, "状态", running = message.isStreaming))
                 is SharedAssistantResponseBlock.Text -> Unit
             }
         }
