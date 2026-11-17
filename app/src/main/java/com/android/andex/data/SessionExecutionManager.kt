@@ -377,6 +377,7 @@ data class SessionExecutionState(
 
 
     val sessionId: String,
+    val activeModel: com.android.andex.data.ResponseModelIdentity = com.android.andex.data.ResponseModelIdentity(),
 
 
 
@@ -577,6 +578,7 @@ private data class AssistantResponseIdentity(
 
 
     val responseGroupId: String,
+    val model: com.android.andex.data.ResponseModelIdentity,
 
 
 
@@ -2227,7 +2229,8 @@ class SessionExecutionManager(
 
 
 
-        val responseIdentity = activateAssistantResponse(handle)
+        val responseIdentity = activateAssistantResponse(handle,
+            com.android.andex.data.ResponseModelIdentity(request.settings.piProviderId, request.settings.modelId))
 
 
 
@@ -2240,6 +2243,7 @@ class SessionExecutionManager(
 
 
                 activeResponseGroupId = responseIdentity.responseGroupId,
+                activeModel = responseIdentity.model,
 
 
 
@@ -2700,6 +2704,7 @@ class SessionExecutionManager(
 
 
             val result = piAgentRunner.runTurn(
+                imageModelOptions = request.providerConfigs.availableModelOptions(),
 
 
 
@@ -5013,7 +5018,11 @@ class SessionExecutionManager(
 
 
 
-    private fun activateAssistantResponse(handle: SessionExecutionHandle): AssistantResponseIdentity {
+    private fun activateAssistantResponse(
+        handle: SessionExecutionHandle,
+        model: com.android.andex.data.ResponseModelIdentity =
+            _executionStates.value[handle.sessionId]?.activeModel ?: com.android.andex.data.ResponseModelIdentity(),
+    ): AssistantResponseIdentity {
 
 
 
@@ -5030,6 +5039,7 @@ class SessionExecutionManager(
 
 
             responseGroupId = "agent-group-$turnId",
+            model = model,
 
 
 
@@ -5461,6 +5471,10 @@ class SessionExecutionManager(
 
 
 
+        }.map { message ->
+            val model = com.android.andex.data.responseModelIdentity(providerPayloadJson)
+                .takeIf { it.isKnown } ?: responseIdentity?.model
+            message.copy(providerPayloadJson = model?.toPayloadJson().orEmpty())
         }.let { messages ->
 
 
@@ -5573,7 +5587,7 @@ class SessionExecutionManager(
 
 
 
-                                providerPayloadJson = providerPayloadJson,
+                                providerPayloadJson = providerPayloadJson.ifBlank { get(lastIndex).providerPayloadJson },
 
 
 
@@ -5617,7 +5631,7 @@ class SessionExecutionManager(
 
 
 
-                                providerPayloadJson = providerPayloadJson,
+                                providerPayloadJson = providerPayloadJson.ifBlank { get(lastIndex).providerPayloadJson },
 
 
 

@@ -146,15 +146,17 @@ test("lists Pi-discovered project skills without Andex managed copies", async ()
     join(managedSkill, "SKILL.md"),
     "---\nname: managed\ndescription: Already managed by Andex\n---\n",
   );
-  const client = new BridgeClient({ HOME: root }, "dist/extension-bridge.mjs");
+  const client = new BridgeClient({ HOME: root, USERPROFILE: root }, "dist/extension-bridge.mjs");
   try {
     const payload = await client.request("skills-1", "list_discovered_skills", {
       workspace_directory: workspace,
       agent_directory: agentDir,
       workspace_trusted: true,
     });
-    assert.deepEqual(payload.skills.map((skill) => skill.name), ["review"]);
-    assert.equal(payload.skills[0].file_path, join(projectSkill, "SKILL.md"));
+    // Ancestor user skills can be discovered when Windows Temp is under USERPROFILE.
+    const projectSkills = payload.skills.filter((skill) => skill.file_path.startsWith(workspace));
+    assert.deepEqual(projectSkills.map((skill) => skill.name), ["review"]);
+    assert.equal(projectSkills[0].file_path, join(projectSkill, "SKILL.md"));
   } finally {
     await client.close();
     await rm(root, { recursive: true, force: true });
@@ -3025,4 +3027,53 @@ test("image model turn saves binary and references in persistent conversation", 
   assert.ok(history.includes("生成图片"));
   assert.equal(history.includes(png), false);
   assert.ok(client.events.some(e => e.event === "assistant_text_delta"));
+});
+
+test("text model can call configured image2 with explicit dimensions and transparent PNG", async (t) => {
+  const home = await mkdtemp(join(tmpdir(), "andex-auto-image-"));
+  const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jQ1sAAAAASUVORK5CYII=";
+  const requests = [];
+  const server = createServer((request, response) => {
+    const chunks = [];
+    request.on("data", c => chunks.push(c));
+    request.on("end", () => {
+      requests.push({ url: request.url, body: JSON.parse(Buffer.concat(chunks).toString()) });
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ data: [{ b64_json: png }],
+        usage: { input_tokens: 3, output_tokens: 5, total_tokens: 8 } }));
+    });
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  const client = new BridgeClient({ HOME: home, USERPROFILE: home });
+  t.after(async () => { await client.close(); await new Promise(resolve => server.close(resolve)); await rm(home, { recursive: true, force: true }); });
+  const imageConfig = { provider_type: "custom", provider_config_id: "faux", pi_provider_id: "andex-proxy",
+    pi_api: "openai-completions", model_id: "gpt-image-2", base_url: `http://127.0.0.1:${server.address().port}/v1`, api_key: "image-secret" };
+  const result = await client.request("auto-image", "run_turn", {
+    ...turnPayload("auto-image-session", [userMessage("画个透明图标")], fauxConfig({
+      faux_response: "图片已生成",
+      faux_tool_calls: [{ id: "draw-tool", name: "generate_image",
+        arguments: { prompt: "透明图标", size: "512x768", output_format: "png", background: "transparent" } }],
+    })),
+    workspace_directory: home,
+    image_models: [{ key: "configured-image2", name: "图像渠道 / gpt-image-2", model_config: imageConfig }],
+  }, 30_000);
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].url, "/v1/images/generations");
+  assert.equal(requests[0].body.model, "gpt-image-2");
+  assert.equal(requests[0].body.size, "512x768");
+  assert.equal(requests[0].body.output_format, "png");
+  assert.equal(requests[0].body.background, "transparent");
+  const event = client.events.find(e => e.event === "tool_call_end" && e.payload.name === "generate_image");
+  assert.ok(event, JSON.stringify(client.events));
+  assert.equal(event.payload.is_error, false);
+  const details = JSON.parse(event.payload.output_json);
+  assert.equal(details.model, "gpt-image-2");
+  const bytes = await readFile(details.paths[0]);
+  assert.equal(bytes.toString("base64"), png);
+  assert.equal(bytes[25], 4, "PNG alpha channel is preserved");
+  assert.ok(result.usage.request_count >= 3, "image call is included with text requests");
+  const history = await readFile(result.session_file, "utf8");
+  assert.ok(history.includes("generate_image"));
+  assert.ok(history.includes(".andex-generated"));
+  assert.equal(history.includes("image-secret"), false);
 });

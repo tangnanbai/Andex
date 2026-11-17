@@ -34,18 +34,26 @@ internal fun SharedRolePicker(settings: AppSettings, onSelected: (String) -> Uni
 
 internal fun buildIosWorkTrace(messages: List<SharedChatMessage>): List<WorkTraceStep> = buildList {
     val positions = mutableMapOf<String, Int>()
+    val models = workTraceModels(messages.map {
+        WorkTraceModelSource(it.fromUser, it.responseGroupId,
+            com.android.andex.data.responseModelIdentity(it.providerPayloadJson, it.providerId, it.modelId))
+    })
+    var model = com.android.andex.data.ResponseModelIdentity()
     fun tool(item: SharedChatToolInvocation) {
         val step = WorkTraceStep("tool:${item.id}", workTraceToolLabel(item.name, item.isRunning),
             "参数\n${item.argumentsJson}\n\n结果\n${item.outputJson.ifBlank { item.output }}",
             "工具", item.startedAtMillis, item.isRunning,
-            toolName = item.name, command = item.argumentsJson, result = item.outputJson.ifBlank { item.output })
+            toolName = item.name, command = item.argumentsJson, result = item.outputJson.ifBlank { item.output },
+            model = if (item.name == "generate_image")
+                com.android.andex.data.responseModelIdentity(item.outputJson.ifBlank { item.output }).takeIf { it.isKnown } ?: model else model)
         val index = positions[item.id]
         if (index == null) { positions[item.id] = size; add(step) } else set(index, step)
     }
-    messages.forEach { message ->
+    messages.forEachIndexed { index, message ->
+        model = models[index]
         if (message.fromUser) {
             val input = message.text.ifBlank { if (message.attachments.isNotEmpty()) "附件消息" else "空消息" }
-            add(WorkTraceStep(message.id, input, input, "输入", message.createdAtMillis))
+            add(WorkTraceStep(message.id, input, input, "输入", message.createdAtMillis, model = model))
         }
         message.responseBlocks.forEach { block ->
             when (block) {
@@ -59,20 +67,20 @@ internal fun buildIosWorkTrace(messages: List<SharedChatMessage>): List<WorkTrac
                             is SharedReasoningSummaryChunk -> add(WorkTraceStep("reason:${event.id}",
                                 event.title.ifBlank { event.detail.ifBlank { event.rawText } },
                                 listOf(event.detail, event.rawText).filter { it.isNotBlank() }.distinct().joinToString("\n\n"),
-                                "记录", event.createdAtMillis, event.isPending))
+                                "记录", event.createdAtMillis, event.isPending, model = model))
                         }
                     }
                     if (block.trace.chunks.isEmpty() && block.trace.rawText.isNotBlank()) {
                         add(WorkTraceStep("reason:${block.trace.id}", block.trace.rawText, block.trace.rawText,
-                            "记录", block.trace.startedAtMillis))
+                            "记录", block.trace.startedAtMillis, model = model))
                     }
                 }
-                is SharedAssistantResponseBlock.Status -> add(WorkTraceStep(block.id, block.text, block.detail, "状态", running = message.isStreaming))
+                is SharedAssistantResponseBlock.Status -> add(WorkTraceStep(block.id, block.text, block.detail, "状态", running = message.isStreaming, model = model))
                 is SharedAssistantResponseBlock.Text -> Unit
             }
         }
         message.tools.forEach(::tool)
-        if (!message.fromUser && message.text.isNotBlank()) add(WorkTraceStep(message.id, message.text, message.text, "回复", message.createdAtMillis, message.isStreaming))
-        if (message.status.isNotBlank()) add(WorkTraceStep("status:${message.id}", message.status, message.statusDetail, "状态"))
+        if (!message.fromUser && message.text.isNotBlank()) add(WorkTraceStep(message.id, message.text, message.text, "回复", message.createdAtMillis, message.isStreaming, model = model))
+        if (message.status.isNotBlank()) add(WorkTraceStep("status:${message.id}", message.status, message.statusDetail, "状态", model = model))
     }
 }.distinctBy { it.id }

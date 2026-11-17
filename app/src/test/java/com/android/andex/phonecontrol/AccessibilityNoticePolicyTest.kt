@@ -4,6 +4,19 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class AccessibilityNoticePolicyTest {
+    @Test fun laterChoiceSuppressesBothNoticesAcrossForegroundAndReconnect() {
+        val policy = AccessibilityNoticePolicy()
+        assertNull(policy.sample(0, false, false, true))
+        assertEquals(AccessibilityNotice.PermissionDisabled, policy.sample(8_000, false, false, true))
+        policy.resume()
+        assertNull(policy.sample(10_000, false, false, true, dismissed = true))
+        assertNull(policy.sample(30_000, false, false, true, dismissed = true))
+        assertNull(policy.sample(40_000, true, true, true, dismissed = true))
+        assertNull(policy.sample(50_000, true, false, true, dismissed = true))
+        assertNull(policy.sample(120_000, true, false, true, dismissed = true))
+        assertNull(AccessibilityNoticePolicy().sample(200_000, false, false, true, dismissed = true))
+    }
+
     @Test fun enabledServiceGetsAFullReconnectWindow() {
         val policy = AccessibilityNoticePolicy()
         for (time in 0L..59_000L step 1000L) assertNull(policy.sample(time, true, false, true))

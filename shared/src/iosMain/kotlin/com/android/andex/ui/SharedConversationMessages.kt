@@ -5387,6 +5387,8 @@ internal fun SharedConversationMessage(
 
 
                         usage = message.usage,
+                        model = com.android.andex.data.responseModelIdentity(
+                            message.providerPayloadJson, message.providerId, message.modelId),
 
 
 
@@ -12510,6 +12512,7 @@ private fun SharedMessageActions(
 
 
     usage: SharedPiUsage?,
+    model: com.android.andex.data.ResponseModelIdentity,
 
 
 
@@ -12722,6 +12725,7 @@ private fun SharedMessageActions(
 
 
                 enabled = true,
+                responseModel = model,
 
 
 
@@ -13426,6 +13430,7 @@ private fun MessageActionIcon(
 
 
     enabled: Boolean,
+    responseModel: com.android.andex.data.ResponseModelIdentity? = null,
 
 
 
@@ -13461,7 +13466,9 @@ private fun MessageActionIcon(
 
 
 
-        Icon(
+        if (responseModel != null) {
+            ResponseModelIcon(responseModel, Modifier.size(14.dp), "$description · ${responseModel.description}")
+        } else Icon(
 
 
 

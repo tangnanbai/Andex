@@ -16810,6 +16810,7 @@ fun IosComposeApp(
 
 
                     chatClient.runTurn(
+                        imageModelConfigs = providerConfigs.toList(),
 
 
 
@@ -47131,6 +47132,8 @@ private fun SharedChatScreen(
 
 
         SharedWorkTraceOverlay(
+            conversationKey = selectedSessionId,
+            currentTaskId = timelineTargets.getOrNull(currentTimelineIndex)?.entry?.key,
 
 
 
@@ -49333,6 +49336,7 @@ private fun SharedChatScreen(
 
 
                 ConversationTimeline(
+                    conversationKey = selectedSessionId,
 
 
 
@@ -50780,6 +50784,7 @@ private fun ConversationTopBar(
 
 
 
+                    ProviderBalanceCapsule(modelOptions.firstOrNull { it.key == selectedModelKey })
                     roleSelector()
 
 

@@ -7,7 +7,6 @@ fun modelMentionQuery(text: String, cursor: Int): ModelMentionQuery? {
     val before = text.take(cursor)
     val start = before.lastIndexOf('@')
     if (start < 0) return null
-    if (start > 0 && ((before[start - 1].code < 128 && before[start - 1].isLetterOrDigit()) || before[start - 1] in "._-")) return null
     val query = before.substring(start + 1)
     if (query.any { it.isWhitespace() || it in "@「」" }) return null
     return ModelMentionQuery(start, cursor, query)
@@ -33,5 +32,6 @@ fun isImageGenerationModel(modelId: String): Boolean {
     val name = modelId.lowercase()
     return name.contains("gpt-image") || name.contains("dall-e") ||
         name.contains("nano-banana") || name.contains("nanobanana") ||
-        (name.contains("gemini") && name.contains("image")) || name.startsWith("imagen-")
+        (name.contains("gemini") && name.contains("image")) || name.startsWith("imagen-") ||
+        Regex("^image[-_]?2(?:[.\\-_]|$)").containsMatchIn(name)
 }

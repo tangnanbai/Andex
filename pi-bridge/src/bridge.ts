@@ -1,4 +1,5 @@
 import { generateImages, isImageGenerationModel } from "./image-generation.js";
+import { imageOptions, type ImageOptions } from "./image-options.js";
 import { randomUUID } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { automaticCompactionSettings } from "./context-policy.js";
@@ -220,6 +221,8 @@ interface AgentSessionState {
   outputDurationMillis: number;
   toolArgsById: Map<string, unknown>;
   lastAccessedAt: number;
+  imageModels: Array<{ key: string; name: string; config: ModelConfig }>;
+  imageModelsSignature: string;
 }
 // Pi reports usage per API call; one Andex turn can issue several calls
 // (tool loops, auto retries, follow-ups), so the bridge accumulates them and
@@ -2353,6 +2356,7 @@ function setActiveSessionTools(state: AgentSessionState): void {
   if (state.platform === "android" &&
     state.session.getAllTools().some((tool) => tool.name === "phone_control") &&
     !nonNative.includes("phone_control")) nonNative.push("phone_control");
+  if (state.imageModels.length && !nonNative.includes("generate_image")) nonNative.push("generate_image");
   state.session.setActiveToolsByName([...activeNativeToolNames(state.runtime), ...nonNative]);
 }
 function emptyTurnUsage(): TurnUsageTotals {
@@ -2617,9 +2621,12 @@ async function createNativeAgentSession(
     outputDurationMillis: 0,
     toolArgsById: new Map<string, unknown>(),
     lastAccessedAt: Date.now(),
+    imageModels: configuredImageModels(payload, config),
+    imageModelsSignature: JSON.stringify(payload.image_models ?? []),
   } satisfies AgentSessionState;
   const customTools = [
     ...nativeToolDefinitions(state),
+    ...(state.imageModels.length ? [imageGenerationTool(state)] : []),
     ...allowedHostToolDefinitions(payload.host_tools, platform).map((tool) =>
       createAgentHostToolDefinition(state, tool),
     ),
@@ -2883,8 +2890,9 @@ async function prepareNativeAgentSession(
     existing.skillSignature === skillSignature &&
     existing.workspaceDirectory === workspaceDirectory &&
     existing.runtime === runtimeForPayload(payload);
-  if (existing && !reusable) await closeNativeAgentSession(sessionId);
-  if (!reusable) {
+  const sameImageModels = existing?.imageModelsSignature === JSON.stringify(payload.image_models ?? []);
+  if (existing && (!reusable || !sameImageModels)) await closeNativeAgentSession(sessionId);
+  if (!reusable || !sameImageModels) {
     return { state: await createNativeAgentSession(sessionId, payload, config, history), reused: false };
   }
   existing.lastAccessedAt = Date.now();
@@ -2931,17 +2939,7 @@ async function runImageTurn(id: string, state: AgentSessionState, config: ModelC
   try {
     writeEvent(id, "assistant_request_start");
     const result = await generateImages(config, text, images, signal);
-    const directory = path.join(state.workspaceDirectory, ".andex-generated");
-    if (state.runtime === "termux") await requestRuntimeOperation(state, "mkdir", { path: runtimePath(state, directory), recursive: true }, { signal });
-    else await fs.mkdir(directory, { recursive: true });
-    for (const image of result.images) {
-      signal.throwIfAborted();
-      const file = path.join(directory, `${Date.now()}-${randomUUID()}.${image.extension}`);
-      const visiblePath = runtimePath(state, file);
-      if (state.runtime === "termux") await requestRuntimeOperation(state, "writeFile", { path: visiblePath, atomic: true }, { input: image.bytes, signal });
-      else await fs.writeFile(file, image.bytes);
-      savedPaths.push(visiblePath);
-    }
+    savedPaths.push(...await saveGeneratedImages(state, result.images, signal));
     signal.throwIfAborted();
     const markdown = [result.text, ...savedPaths.map((file, index) => `![生成图片 ${index + 1}](${file.replaceAll(" ", "%20")})`)].filter(Boolean).join("\n\n");
     const usage = result.usage ?? {};
@@ -2964,6 +2962,86 @@ async function runImageTurn(id: string, state: AgentSessionState, config: ModelC
     activeAborters.delete(id);
     if (state.currentRequestId === id) state.currentRequestId = "";
   }
+}
+
+function configuredImageModels(payload: JsonObject, current: ModelConfig): AgentSessionState["imageModels"] {
+  const raw = Array.isArray(payload.image_models) ? payload.image_models : [];
+  return raw.map(value => {
+    const item = asObject(value);
+    return { key: asString(item.key), name: asString(item.name), config: normalizeModelConfig(item.model_config) };
+  }).filter(item => item.key && isImageGenerationModel(item.config.model_id))
+    .sort((a, b) =>
+      Number(b.config.provider_config_id === current.provider_config_id) - Number(a.config.provider_config_id === current.provider_config_id) ||
+      Number(!/^(?:gpt-)?image-?2$/i.test(a.config.model_id)) - Number(!/^(?:gpt-)?image-?2$/i.test(b.config.model_id)));
+}
+
+async function saveGeneratedImages(
+  state: AgentSessionState, images: Awaited<ReturnType<typeof generateImages>>["images"], signal: AbortSignal,
+): Promise<string[]> {
+  const directory = path.join(state.workspaceDirectory, ".andex-generated");
+  if (state.runtime === "termux") await requestRuntimeOperation(state, "mkdir", { path: runtimePath(state, directory), recursive: true }, { signal });
+  else await fs.mkdir(directory, { recursive: true });
+  const paths: string[] = [];
+  for (const image of images) {
+    signal.throwIfAborted();
+    const file = path.join(directory, `${Date.now()}-${randomUUID()}.${image.extension}`);
+    const visiblePath = runtimePath(state, file);
+    if (state.runtime === "termux") await requestRuntimeOperation(state, "writeFile", { path: visiblePath, atomic: true }, { input: image.bytes, signal });
+    else await fs.writeFile(file, image.bytes);
+    paths.push(visiblePath);
+  }
+  return paths;
+}
+
+function imageGenerationTool(state: AgentSessionState): ToolDefinition<any, any, any> {
+  return {
+    name: "generate_image",
+    label: "生成图片",
+    description: `用户要求画图、设计图标或生成图片时调用此工具，不要仅描述或声称已生成。
+可用生图模型：${state.imageModels.map(m => `${m.key} (${m.name})`).join("；")}。
+默认优先同渠道 image2 模型。把用户原话中的尺寸、格式、分辨率、透明背景要求传入参数和 prompt。
+结果会给出实际图片路径，用 Markdown 图片语法原样展示。失败后报告原因，不要自动重复计费调用。`,
+    parameters: Type.Object({
+      prompt: Type.String({ description: "完整绘图描述，保留用户的尺寸、格式、分辨率与透明背景要求。" }),
+      model_key: Type.Optional(Type.String({ description: "可用模型的 key；省略时自动选择。" })),
+      size: Type.Optional(Type.String({ description: "像素宽x高，例如 1024x1024、1536x1024。" })),
+      output_format: Type.Optional(Type.Union([Type.Literal("png"), Type.Literal("jpeg"), Type.Literal("webp")])),
+      background: Type.Optional(Type.Union([Type.Literal("transparent"), Type.Literal("opaque"), Type.Literal("auto")])),
+      resolution: Type.Optional(Type.Union([Type.Literal("1K"), Type.Literal("2K"), Type.Literal("4K")])),
+      aspect_ratio: Type.Optional(Type.String({ description: "宽高比，例如 16:9。" })),
+      quality: Type.Optional(Type.Union([Type.Literal("auto"), Type.Literal("low"), Type.Literal("medium"), Type.Literal("high")])),
+    }),
+    executionMode: "sequential",
+    execute: async (_toolCallId, args, cancellation) => {
+      const params = asObject(args);
+      const model = params.model_key
+        ? state.imageModels.find(item => item.key === params.model_key) : state.imageModels[0];
+      if (!model) throw new Error("指定生图模型未配置或已停用，请在模型设置中启用生图模型。");
+      const signal = AbortSignal.any([...(cancellation ? [cancellation] : []),
+        AbortSignal.timeout(model.config.timeout_ms ?? 360_000)]);
+      const { prompt: rawPrompt, model_key: _modelKey, ...overrides } = params;
+      const prompt = asString(rawPrompt).trim();
+      if (!prompt) throw new Error("请提供绘图描述。");
+      const options = imageOptions(prompt, overrides as ImageOptions);
+      const result = await generateImages(model.config, prompt, [], signal, fetch, options);
+      const paths = await saveGeneratedImages(state, result.images, signal);
+      signal.throwIfAborted();
+      const markdown = [result.text, ...paths.map((file, index) =>
+        `![生成图片 ${index + 1}](${file.replaceAll(" ", "%20")})`)].filter(Boolean).join("\n\n");
+      const usage = result.usage ?? {};
+      state.turnUsage.inputTokens += asNumber(usage.input_tokens ?? usage.promptTokenCount, 0);
+      state.turnUsage.outputTokens += asNumber(usage.output_tokens ?? usage.candidatesTokenCount, 0);
+      state.turnUsage.totalTokens += asNumber(usage.total_tokens ?? usage.totalTokenCount,
+        asNumber(usage.input_tokens ?? usage.promptTokenCount, 0) + asNumber(usage.output_tokens ?? usage.candidatesTokenCount, 0));
+      state.turnUsage.requestCount++;
+      return {
+        content: [{ type: "text", text: markdown }],
+        details: { provider: model.config.pi_provider_id, model: model.config.model_id,
+          paths, options, usage,
+          output_json: JSON.stringify({ provider: model.config.pi_provider_id, model: model.config.model_id, paths, options }) },
+      };
+    },
+  };
 }
 
 async function runNativeAgentTurn(id: string, payload: JsonObject): Promise<JsonObject> {

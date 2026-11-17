@@ -24,14 +24,22 @@ import androidx.compose.ui.text.AnnotatedString
 import com.android.andex.ui.theme.*
 
 internal fun buildWorkTrace(messages: List<ChatMessage>, pendingTools: List<ChatToolInvocation>,
-                            pendingBlocks: List<AssistantResponseBlock>, pendingText: String): List<WorkTraceStep> {
+                            pendingBlocks: List<AssistantResponseBlock>, pendingText: String,
+                            pendingModel: com.android.andex.data.ResponseModelIdentity = com.android.andex.data.ResponseModelIdentity()): List<WorkTraceStep> {
     val steps = mutableListOf<WorkTraceStep>()
+    val models = workTraceModels(messages.map {
+        WorkTraceModelSource(it.author == MessageAuthor.User, it.responseGroupId,
+            com.android.andex.data.responseModelIdentity(it.providerPayloadJson))
+    }, pendingModel)
+    var model = com.android.andex.data.ResponseModelIdentity()
     val toolPositions = mutableMapOf<String, Int>()
     fun tool(tool: ChatToolInvocation) {
         val step = WorkTraceStep(
             "tool:${tool.id}", workTraceToolLabel(tool.toolName, tool.isRunning),
             "参数\n${tool.argumentsJson}\n\n结果\n${tool.outputJson}", "工具", tool.startedAtMillis, tool.isRunning,
             toolName = tool.toolName, command = tool.argumentsJson, result = tool.outputJson,
+            model = if (tool.toolName == "generate_image")
+                com.android.andex.data.responseModelIdentity(tool.outputJson).takeIf { it.isKnown } ?: model else model,
         )
         val index = toolPositions[tool.id]
         if (index == null) {
@@ -48,36 +56,38 @@ internal fun buildWorkTrace(messages: List<ChatMessage>, pendingTools: List<Chat
                 is ReasoningSummaryChunk -> steps.add(WorkTraceStep("reason:${event.id}",
                     event.title.ifBlank { event.detail.ifBlank { event.rawText } },
                     listOf(event.detail, event.rawText).filter { it.isNotBlank() }.distinct().joinToString("\n\n"),
-                    "记录", event.createdAtMillis, event.isPending))
+                    "记录", event.createdAtMillis, event.isPending, model = model))
             }
         }
         if (trace.chunks.isEmpty() && trace.rawText.isNotBlank()) {
-            steps += WorkTraceStep("reason:${trace.id}", trace.rawText, trace.rawText, "记录", trace.startedAtMillis)
+            steps += WorkTraceStep("reason:${trace.id}", trace.rawText, trace.rawText, "记录", trace.startedAtMillis, model = model)
         }
     }
-    messages.forEach { message ->
+    messages.forEachIndexed { index, message ->
+        model = models[index]
         if (message.author == MessageAuthor.User) {
             val input = message.text.ifBlank { if (message.attachments.isNotEmpty()) "附件消息" else "空消息" }
-            steps += WorkTraceStep("message:${message.id}", input, input, "输入", message.createdAtMillis)
+            steps += WorkTraceStep("message:${message.id}", input, input, "输入", message.createdAtMillis, model = model)
         }
         message.reasoningTrace?.let(::trace)
         message.toolInvocations.sortedBy { it.timelineOrder }.forEach(::tool)
         if (message.author != MessageAuthor.User && message.text.isNotBlank()) steps += WorkTraceStep("message:${message.id}", message.text,
-            message.text, "回复", message.createdAtMillis)
+            message.text, "回复", message.createdAtMillis, model = model)
         if (message.statusText.isNotBlank()) steps += WorkTraceStep("status:${message.id}",
-            message.statusText, message.statusDetail, "状态", message.createdAtMillis)
+            message.statusText, message.statusDetail, "状态", message.createdAtMillis, model = model)
     }
+    model = pendingModel
     pendingBlocks.forEach { block ->
         when (block) {
             is AssistantResponseBlock.ToolGroup -> block.toolInvocations.forEach(::tool)
             is AssistantResponseBlock.Reasoning -> trace(block.trace)
-            is AssistantResponseBlock.Text -> steps.add(WorkTraceStep("pending:${block.id}", block.text, block.text, "回复"))
-            is AssistantResponseBlock.Status -> steps.add(WorkTraceStep("pending:${block.id}", block.text, block.detail, "状态"))
+            is AssistantResponseBlock.Text -> steps.add(WorkTraceStep("pending:${block.id}", block.text, block.text, "回复", model = model))
+            is AssistantResponseBlock.Status -> steps.add(WorkTraceStep("pending:${block.id}", block.text, block.detail, "状态", model = model))
         }
     }
     pendingTools.forEach(::tool)
     if (pendingText.isNotBlank() && pendingBlocks.none { it is AssistantResponseBlock.Text && it.text == pendingText })
-        steps += WorkTraceStep("pending:text", pendingText, pendingText, "回复", running = true)
+        steps += WorkTraceStep("pending:text", pendingText, pendingText, "回复", running = true, model = model)
     return steps.distinctBy { it.id }
 }
 
@@ -86,13 +96,16 @@ internal fun buildWorkTrace(messages: List<ChatMessage>, pendingTools: List<Chat
 internal fun WorkTraceOverlay(messages: List<ChatMessage>, pendingTools: List<ChatToolInvocation>,
     pendingBlocks: List<AssistantResponseBlock>, pendingText: String,
     leftDrawerActive: Boolean, onRightGestureActive: (Boolean) -> Unit,
+    conversationKey: String, currentTaskId: String?,
+    pendingModel: com.android.andex.data.ResponseModelIdentity,
     content: @Composable () -> Unit) {
     SharedWorkTraceOverlay(backHandler = { open, close -> BackHandler(enabled = open, onBack = close) },
         leftDrawerActive = leftDrawerActive, onRightGestureActive = onRightGestureActive,
+        conversationKey = conversationKey, currentTaskId = currentTaskId,
         stepsProvider = {
-            val steps by produceState<List<WorkTraceStep>>(emptyList(), messages, pendingTools, pendingBlocks, pendingText) {
+            val steps by produceState<List<WorkTraceStep>>(emptyList(), messages, pendingTools, pendingBlocks, pendingText, pendingModel) {
                 value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
-                    buildWorkTrace(messages, pendingTools, pendingBlocks, pendingText)
+                    buildWorkTrace(messages, pendingTools, pendingBlocks, pendingText, pendingModel)
                 }
             }
             steps

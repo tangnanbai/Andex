@@ -21,6 +21,10 @@ class PhoneControlPreferences(context: Context) {
         get() = preferences.getBoolean("accessibility_previously_granted", false)
         set(value) { preferences.edit().putBoolean("accessibility_previously_granted", value).apply() }
 
+    var accessibilityNoticeDismissed: Boolean
+        get() = preferences.getBoolean("accessibility_notice_dismissed", false)
+        set(value) { preferences.edit().putBoolean("accessibility_notice_dismissed", value).apply() }
+
     var embeddedTermux: Boolean
         get() = preferences.getBoolean("embedded_termux", true)
         set(value) { preferences.edit().putBoolean("embedded_termux", value).apply() }

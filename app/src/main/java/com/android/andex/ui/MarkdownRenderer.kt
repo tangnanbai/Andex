@@ -96,7 +96,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 
 private const val LinkAnnotationTag = "url"
-private const val MaxMarkdownImageBytes = 8 * 1024 * 1024
+private const val MaxMarkdownImageBytes = 32 * 1024 * 1024
 private const val MarkdownHtmlBridgeName = "AndexMarkdownHtmlBridge"
 private const val MermaidScriptUrl = "https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"
 private const val KatexCssUrl = "https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css"

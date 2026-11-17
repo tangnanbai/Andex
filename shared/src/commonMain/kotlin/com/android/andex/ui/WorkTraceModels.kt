@@ -10,6 +10,7 @@ data class WorkTraceStep(
     val toolName: String = "",
     val command: String? = null,
     val result: String? = null,
+    val model: com.android.andex.data.ResponseModelIdentity = com.android.andex.data.ResponseModelIdentity(),
 )
 
 data class WorkTraceTask(
@@ -18,6 +19,38 @@ data class WorkTraceTask(
     val steps: List<WorkTraceStep>,
 ) {
     val running: Boolean get() = steps.any { it.running }
+}
+
+data class WorkTraceModelSource(
+    val fromUser: Boolean,
+    val responseGroupId: String?,
+    val model: com.android.andex.data.ResponseModelIdentity,
+)
+
+/** Backfill split response blocks only within their response or user turn. */
+fun workTraceModels(
+    sources: List<WorkTraceModelSource>,
+    pendingModel: com.android.andex.data.ResponseModelIdentity = com.android.andex.data.ResponseModelIdentity(),
+): List<com.android.andex.data.ResponseModelIdentity> {
+    val groups = sources.filter { !it.fromUser && it.model.isKnown && !it.responseGroupId.isNullOrBlank() }
+        .associate { it.responseGroupId to it.model }
+    val result = MutableList(sources.size) { com.android.andex.data.ResponseModelIdentity() }
+    var start = 0
+    while (start < sources.size) {
+        var end = start + 1
+        while (end < sources.size && !sources[end].fromUser) end++
+        val turnModel = (start until end).asSequence().map { sources[it].model }
+            .firstOrNull { it.isKnown }
+            ?: pendingModel.takeIf { end == sources.size }
+            ?: com.android.andex.data.ResponseModelIdentity()
+        for (index in start until end) {
+            val source = sources[index]
+            result[index] = source.model.takeIf { it.isKnown }
+                ?: groups[source.responseGroupId] ?: turnModel
+        }
+        start = end
+    }
+    return result
 }
 
 internal fun workTraceStepPreview(step: WorkTraceStep): String =
@@ -48,18 +81,19 @@ internal fun groupWorkTraceSteps(steps: List<WorkTraceStep>): List<WorkTraceTask
 
 internal fun workTraceTaskExpanded(
     taskId: String,
-    latestTaskId: String?,
+    currentTaskId: String?,
     expandedIds: List<String>,
     collapsedIds: List<String>,
     searching: Boolean = false,
 ): Boolean = taskId in expandedIds ||
-    (taskId !in collapsedIds && (searching || taskId == latestTaskId))
+    (taskId !in collapsedIds && (searching || taskId == currentTaskId))
 
 fun workTraceToolLabel(name: String, running: Boolean): String = when (name.lowercase()) {
     "bash" -> if (running) "正在执行 bash 命令" else "已执行 bash 命令"
     "fetch_web_url", "read_webpage" -> if (running) "正在读取网页" else "已读取网页"
     "tavily_search", "web_search" -> if (running) "正在搜索网页" else "已搜索网页"
     "phone_control" -> if (running) "正在操作手机" else "已调用手机控制"
+    "generate_image" -> if (running) "正在生成图片" else "已生成图片"
     else -> if (running) "$name · 运行中" else name
 }
 internal fun workTraceLatestRowIndex(tasks: List<WorkTraceTask>, expanded: (WorkTraceTask) -> Boolean): Int {

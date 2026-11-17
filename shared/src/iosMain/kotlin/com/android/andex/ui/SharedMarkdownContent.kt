@@ -70,7 +70,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 internal const val SharedMarkdownFileMaximumBytes = 24L * 1024L * 1024L
-internal const val SharedMarkdownImageMaximumBytes = 8L * 1024L * 1024L
+internal const val SharedMarkdownImageMaximumBytes = 32L * 1024L * 1024L
 
 internal data class SharedMarkdownImageBinary(
     val bytes: ByteArray,

@@ -76,6 +76,7 @@ private val TimelineExitTolerance = 28.dp
 fun ConversationTimeline(
     entries: List<ConversationTimelineEntry>,
     currentIndex: Int,
+    conversationKey: String = "",
     modifier: Modifier = Modifier,
     onNavigate: (Int) -> Unit,
 ) {
@@ -87,8 +88,9 @@ fun ConversationTimeline(
     val latestOnNavigate by rememberUpdatedState(onNavigate)
     val safeCurrentIndex = currentIndex.coerceIn(entries.indices)
     val latestCurrentIndex by rememberUpdatedState(safeCurrentIndex)
-    var navigating by remember(entries) { mutableStateOf(false) }
-    var selectedIndex by remember(entries) { mutableIntStateOf(safeCurrentIndex) }
+    val entryKeys = entries.map { it.key }
+    var navigating by remember(conversationKey, entryKeys) { mutableStateOf(false) }
+    var selectedIndex by remember(conversationKey, entryKeys) { mutableIntStateOf(safeCurrentIndex) }
     var dragDistancePx by remember { mutableFloatStateOf(0f) }
     var dragOffset by remember { mutableStateOf(Offset.Zero) }
 
@@ -120,8 +122,8 @@ fun ConversationTimeline(
             ),
             label = "conversation_timeline_expansion",
         )
-        val selectionPosition = remember(entries) { Animatable(safeCurrentIndex.toFloat()) }
-        val compactWindowPosition = remember(entries) {
+        val selectionPosition = remember(conversationKey, entryKeys) { Animatable(safeCurrentIndex.toFloat()) }
+        val compactWindowPosition = remember(conversationKey, entryKeys) {
             Animatable(compactTimelineWindowStart(entries.size, safeCurrentIndex).toFloat())
         }
         val selectionTarget = if (navigating) selectedIndex else safeCurrentIndex
@@ -195,15 +197,15 @@ fun ConversationTimeline(
         // continues beyond this compact hit area until UP, including past the bottom.
         val fullRailHeightPx = with(density) { navigationHeight.toPx() }
         val compactHeight = TimelineCompactTouchHeight.coerceAtMost(maxHeight)
-        val compactHeightPx = with(density) { compactHeight.toPx() }
         Box(Modifier.align(Alignment.BottomEnd).width(TimelineRailWidth).height(compactHeight)
             .semantics { contentDescription = "按住滑动切换话题" }
-            .pointerInput(entries.size, fullRailHeightPx) {
+            .pointerInput(conversationKey, entryKeys, fullRailHeightPx) {
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
                         down.consume()
                         navigating = true
                         selectedIndex = latestCurrentIndex
+                        val startIndex = latestCurrentIndex
                         dragDistancePx = 0f
                         dragOffset = Offset.Zero
                         var finalPointer = down.position
@@ -222,8 +224,9 @@ fun ConversationTimeline(
                             dragDistancePx = maxOf(dragDistancePx, dragOffset.getDistance())
                             finalPointer = change.position
                             if (dragDistancePx >= movementThresholdPx) {
-                                selectedIndex = timelineIndexForPosition(
-                                    positionY = change.position.y + fullRailHeightPx - compactHeightPx,
+                                selectedIndex = timelineIndexForDrag(
+                                    startIndex = startIndex,
+                                    displacementY = dragOffset.y,
                                     height = fullRailHeightPx,
                                     count = entries.size,
                                     verticalPadding = verticalPaddingPx,
@@ -310,6 +313,19 @@ fun ConversationTimeline(
             }
         }
     }
+}
+
+internal fun timelineIndexForDrag(
+    startIndex: Int,
+    displacementY: Float,
+    height: Float,
+    count: Int,
+    verticalPadding: Float,
+    barHeight: Float,
+): Int {
+    if (count <= 1) return 0
+    val step = (height - verticalPadding * 2 - barHeight).coerceAtLeast(1f) / (count - 1)
+    return (startIndex + displacementY / step).roundToInt().coerceIn(0, count - 1)
 }
 
 internal fun timelineGestureCommits(cancelled: Boolean, distance: Float, threshold: Float,

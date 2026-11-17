@@ -1,5 +1,7 @@
 package com.android.andex.ui
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.MaterialTheme
@@ -45,9 +47,17 @@ internal expect fun VoiceToast(message: String?)
 
 @Composable
 private fun VoiceRecordingOverlay(state: VoiceOverlayState, modifier: Modifier) {
-    val primary = AndexPrimary
+    val primary by animateColorAsState(
+        targetValue = if (state.cancelArmed) Color(0xFF701722) else AndexPrimary,
+        animationSpec = tween(140),
+        label = "voiceGradientColor",
+    )
     val background = AndexBackground
-    val foreground = themeForeground(primary)
+    val foreground by animateColorAsState(
+        targetValue = if (state.cancelArmed) Color(0xFFFF5252) else themeForeground(AndexPrimary),
+        animationSpec = tween(140),
+        label = "voiceForegroundColor",
+    )
     Box(modifier.fillMaxWidth().height(190.dp)) {
         Canvas(Modifier.fillMaxSize()) {
             drawRect(Brush.verticalGradient(0f to Color.Transparent, .55f to background.copy(alpha = .92f), 1f to background))
@@ -71,7 +81,7 @@ private fun VoiceRecordingOverlay(state: VoiceOverlayState, modifier: Modifier) 
                     textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
             Text(when {
-                state.cancelArmed -> "松开取消"
+                state.cancelArmed -> "松手取消"
                 state.phase == VoicePhase.Listening -> "松开转为文字，上滑取消"
                 else -> "正在识别完整语句…"
             }, color = foreground, style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center)

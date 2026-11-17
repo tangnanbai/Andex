@@ -54,6 +54,8 @@ fun SharedWorkTraceOverlay(
     backHandler: @Composable (Boolean, () -> Unit) -> Unit = { _, _ -> },
     leftDrawerActive: Boolean = false,
     onRightGestureActive: (Boolean) -> Unit = {},
+    conversationKey: String = "",
+    currentTaskId: String? = null,
     stepsProvider: @Composable () -> List<WorkTraceStep>,
     content: @Composable () -> Unit,
 ) {
@@ -76,7 +78,9 @@ fun SharedWorkTraceOverlay(
                 drawerContainerColor = AndexSidebarBackground,
                 drawerShape = RoundedCornerShape(topStart = 30.dp, bottomStart = 30.dp),
             ) {
-                WorkTracePanel(if (rightActive) stepsProvider() else emptyList(), rightActive)
+                key(conversationKey) {
+                    WorkTracePanel(if (rightActive) stepsProvider() else emptyList(), rightActive, currentTaskId)
+                }
             }
         },
         content = content,
@@ -84,12 +88,12 @@ fun SharedWorkTraceOverlay(
 }
 
 @Composable
-private fun WorkTracePanel(steps: List<WorkTraceStep>, active: Boolean) {
+private fun WorkTracePanel(steps: List<WorkTraceStep>, active: Boolean, currentTaskId: String?) {
     val listState = rememberLazyListState()
-    var locateLatest by remember { mutableStateOf(true) }
+    var locateCurrentTask by remember { mutableStateOf(true) }
     var query by rememberSaveable { mutableStateOf("") }
     var searchExpanded by rememberSaveable { mutableStateOf(false) }
-    // Kept outside lazy rows: filtering, drawer closing and live updates do not reset disclosure.
+    // Kept outside lazy rows so filtering and live updates preserve manual disclosure.
     var expandedTasks by rememberSaveable { mutableStateOf(emptyList<String>()) }
     var collapsedTasks by rememberSaveable { mutableStateOf(emptyList<String>()) }
     var expandedSteps by rememberSaveable { mutableStateOf(emptyList<String>()) }
@@ -108,26 +112,29 @@ private fun WorkTracePanel(steps: List<WorkTraceStep>, active: Boolean) {
             }
         }
     }
-    val latestTaskId = tasks.lastOrNull()?.id
-    LaunchedEffect(active) {
+    val selectedTaskId = currentTaskId ?: tasks.lastOrNull()?.id
+    LaunchedEffect(active, selectedTaskId) {
         query = ""
         searchExpanded = false
+        expandedTasks = emptyList()
+        collapsedTasks = emptyList()
+        expandedSteps = emptyList()
         if (active) {
-            locateLatest = true
+            locateCurrentTask = true
         }
     }
-    LaunchedEffect(active, tasks, filtered, locateLatest) {
-        if (active && locateLatest && tasks.isNotEmpty() && query.isBlank() && filtered == tasks) {
-            val latest = tasks.last()
-            collapsedTasks = collapsedTasks - latest.id
-            expandedTasks = (expandedTasks + latest.id).distinct()
-            // Allow the expanded rows to be measured before jumping to the newest step.
+    LaunchedEffect(active, tasks, filtered, locateCurrentTask, selectedTaskId) {
+        if (active && locateCurrentTask && tasks.isNotEmpty() && query.isBlank() && filtered == tasks) {
+            val selectedIndex = tasks.indexOfFirst { it.id == selectedTaskId }
+            if (selectedIndex < 0) return@LaunchedEffect
+            val selected = tasks[selectedIndex]
+            // Wait for disclosure layout before locating the viewed task.
             withFrameNanos { }
-            val index = workTraceLatestRowIndex(tasks) { task ->
-                workTraceTaskExpanded(task.id, latestTaskId, expandedTasks, collapsedTasks, searching = false)
-            }
+            val index = tasks.take(selectedIndex).sumOf { task ->
+                1 + if (workTraceTaskExpanded(task.id, selectedTaskId, expandedTasks, collapsedTasks)) task.steps.size else 0
+            } + if (selectedIndex == tasks.lastIndex) selected.steps.size else 0
             listState.scrollToItem(index)
-            locateLatest = false
+            locateCurrentTask = false
         }
     }
     val taskStartTimes = remember(tasks) {
@@ -162,7 +169,7 @@ private fun WorkTracePanel(steps: List<WorkTraceStep>, active: Boolean) {
             LazyColumn(Modifier.weight(1f), state = listState) {
                 filtered.forEach { task ->
                     val expanded = workTraceTaskExpanded(
-                        task.id, latestTaskId, expandedTasks, collapsedTasks, searching = query.isNotBlank(),
+                        task.id, selectedTaskId, expandedTasks, collapsedTasks, searching = query.isNotBlank(),
                     )
                     item(key = "task:${task.id}", contentType = "task") {
                         WorkTraceTaskHeader(task, expanded) {
@@ -233,11 +240,14 @@ private fun WorkTraceTaskHeader(task: WorkTraceTask, expanded: Boolean, onToggle
                 null, Modifier.size(20.dp), tint = AndexOnSurfaceVariant,
             )
             Column(Modifier.weight(1f)) {
-                Text(
-                    task.title, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                    style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium,
-                    color = AndexOnSurface,
-                )
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    ResponseModelIcon(task.steps.first().model, Modifier.size(16.dp))
+                    Text(
+                        task.title, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium,
+                        color = AndexOnSurface, modifier = Modifier.weight(1f),
+                    )
+                }
                 Text(
                     "${task.steps.size} 步${if (task.running) " · 运行中" else ""}",
                     style = MaterialTheme.typography.labelSmall, color = AndexOnSurfaceVariant,
@@ -286,11 +296,15 @@ private fun WorkTraceTimelineRow(
                     .padding(vertical = 6.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                Text(
-                    step.label.ifBlank { step.kind }, color = AndexOnSurface,
-                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
-                    maxLines = 1, overflow = TextOverflow.Ellipsis,
-                )
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    ResponseModelIcon(step.model, Modifier.size(14.dp))
+                    Text(
+                        step.label.ifBlank { step.kind }, color = AndexOnSurface,
+                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+                        maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
                 if (!expanded) {
                     val preview = remember(step) { workTraceStepPreview(step) }
                     if (preview.isNotBlank()) Text(

@@ -376,6 +376,7 @@ fun ConversationScreen(
     onDismissTermuxSetupNotice: () -> Unit,
     onDismissStarterPromptHint: () -> Unit,
     isSending: Boolean,
+    onVisibleTurnChanged: (String?) -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
     val activeOption = modelOptions.firstOrNull { it.key == selectedModelKey }
@@ -440,6 +441,8 @@ fun ConversationScreen(
             }
         }
     }
+    val visibleTurnId = timelineTargets.getOrNull(currentTimelineIndex)?.entry?.key
+    LaunchedEffect(conversationStateKey, visibleTurnId) { onVisibleTurnChanged(visibleTurnId) }
     val compactSuggestion = remember(messages) { compactCommandSuggestion(messages) }
     val sessionTotalTokens by produceState<Long?>(null, messages) {
         value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
@@ -864,6 +867,7 @@ fun ConversationScreen(
             ConversationTimeline(
                 entries = timelineTargets.map(ConversationTimelineTarget::entry),
                 currentIndex = currentTimelineIndex,
+                conversationKey = conversationStateKey,
                 modifier = Modifier
                     .fillMaxSize()
                     .windowInsetsPadding(WindowInsets.ime.only(WindowInsetsSides.Bottom))

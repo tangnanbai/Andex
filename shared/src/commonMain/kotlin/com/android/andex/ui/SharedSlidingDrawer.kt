@@ -93,7 +93,8 @@ fun SharedSlidingDrawer(
             val wasOpen = drawerState.progress > 0f
             var lastPosition = down.position
             var claimed = false
-            var rejected = !available
+            var rejected = !available || (!wasOpen &&
+                !drawerGestureStartsInHotZone(down.position.x, size.width.toFloat(), right))
             var lastDelta = 0f
             var travel = 0f
             do {
@@ -102,7 +103,7 @@ fun SharedSlidingDrawer(
                 val displacement = pointer.position - down.position
                 if (!claimed && !rejected && (abs(displacement.x) > viewConfiguration.touchSlop || abs(displacement.y) > viewConfiguration.touchSlop)) {
                     if (abs(displacement.y) >= abs(displacement.x) || (!wasOpen && displacement.x * sign <= 0f) || pointer.isConsumed) rejected = true
-                    else claimed = true
+                    else claimed = drawerGesturePastOpeningDistance(displacement.x, 28.dp.toPx(), wasOpen)
                 }
                 if (claimed) {
                     val delta = pointer.position.x - lastPosition.x
@@ -144,3 +145,9 @@ fun SharedSlidingDrawer(
         }
     }
 }
+
+internal fun drawerGestureStartsInHotZone(x: Float, width: Float, right: Boolean): Boolean =
+    width > 0f && x in 0f..width && (if (right) x >= width * 2f / 3f else x <= width / 3f)
+
+internal fun drawerGesturePastOpeningDistance(deltaX: Float, openingDistance: Float, wasOpen: Boolean): Boolean =
+    wasOpen || abs(deltaX) >= openingDistance

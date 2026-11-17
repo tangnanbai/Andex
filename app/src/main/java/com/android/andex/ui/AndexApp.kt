@@ -475,6 +475,7 @@ private fun AndexAppContent(
     }
     val runtimeWorkspaceFileBridge = appRuntime.runtimeWorkspaceFileBridge
     val activeSession = uiState.sessions.firstOrNull { it.id == uiState.currentSessionId }
+    var visibleTraceTurnId by remember(uiState.currentSessionId) { mutableStateOf<String?>(null) }
     val activeProviderConfig = uiState.providerConfigs.firstOrNull { it.isEnabled }
         ?: uiState.providerConfigs.firstOrNull()
     val currentSessionExecution = uiState.sessionExecutionStates[uiState.currentSessionId]
@@ -963,6 +964,10 @@ private fun AndexAppContent(
                         modifier = Modifier.fillMaxSize(),
                     ) {
                         WorkTraceOverlay(currentMessages, pendingToolInvocations, pendingResponseBlocks, pendingAssistantText,
+                            pendingModel = currentSessionExecution?.takeIf { it.isRunning }?.activeModel
+                                ?: com.android.andex.data.ResponseModelIdentity(),
+                            conversationKey = uiState.currentSessionId,
+                            currentTaskId = visibleTraceTurnId?.let { "message:$it" },
                             leftDrawerActive = drawerState.isOpen || drawerState.targetValue == androidx.compose.material3.DrawerValue.Open,
                             onRightGestureActive = { rightDrawerActive = it }) {
                         ConversationScreen(
@@ -973,6 +978,7 @@ private fun AndexAppContent(
                         }
                     },
                     conversationStateKey = uiState.currentSessionId,
+                    onVisibleTurnChanged = { visibleTraceTurnId = it },
                     messages = currentMessages,
                     workspaceDirectory = currentRuntimeWorkspaceDirectory,
                     pendingToolInvocations = pendingToolInvocations,

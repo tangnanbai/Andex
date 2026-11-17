@@ -13,6 +13,9 @@ import com.android.andex.data.LlmMessage
 import com.android.andex.data.LlmTextPart
 import com.android.andex.data.LocalRuntimeId
 import com.android.andex.data.ModelsDevModelLimits
+import com.android.andex.data.ProviderModelOption
+import com.android.andex.data.isImageGenerationModel
+import com.android.andex.data.withModelOption
 import com.android.andex.data.PiExtensionStateRepository
 import com.android.andex.data.StreamingStatus
 import com.android.andex.data.SettingsRepository
@@ -62,6 +65,7 @@ class PiAgentRunner(
         isReasoningModel: Boolean = true,
         modelsDevThinkingLevels: List<String>? = null,
         modelsDevLimits: ModelsDevModelLimits? = null,
+        imageModelOptions: List<ProviderModelOption> = emptyList(),
         onToolEvent: suspend (AgentToolEvent) -> Unit = {},
         onToolProgress: (suspend (AgentToolEvent) -> Unit)? = null,
         onAssistantTextDelta: suspend (String) -> Unit = {},
@@ -114,6 +118,15 @@ class PiAgentRunner(
                 val payload = JSONObject().apply {
                     val extensionLoadOptions = piExtensionStateRepository?.loadOptions()
                     put("model_config", modelConfig.toJson())
+                    put("image_models", JSONArray().apply {
+                        imageModelOptions.filter { isImageGenerationModel(it.modelId) }.forEach { option ->
+                            put(JSONObject().apply {
+                                put("key", option.key)
+                                put("name", "${option.providerName} / ${option.modelId}")
+                                put("model_config", settings.withModelOption(option).toPiModelConfig().toJson())
+                            })
+                        }
+                    })
                     put("session_id", resolvedSessionId)
                     if (sessionFile.isNotBlank()) put("session_file", sessionFile)
                     put("system_prompt", prompt())

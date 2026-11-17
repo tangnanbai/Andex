@@ -36,6 +36,33 @@ import kotlinx.serialization.json.put
 @OptIn(ExperimentalCoroutinesApi::class)
 class SharedPiChatClientTest {
     @Test
+    fun onlyEnabledImageModelsAreExposedToTheTextAgentWithTheirOwnChannelConfig() = runTest {
+        val process = ChatProtocolProcess()
+        val bridge = SharedPiBridgeClient(
+            transport = SingleProcessTransport(process),
+            dispatcher = StandardTestDispatcher(testScheduler),
+        )
+        val images = testProvider().copy(
+            id = "images", modelId = "gpt-image-2",
+            manualModelIds = listOf("gpt-image-2", "gpt-image-2.5", "deepseek-chat"),
+            enabledModelIds = listOf("gpt-image-2", "deepseek-chat"),
+            apiKey = "image-channel-key",
+        )
+        try {
+            SharedPiChatClient(bridge).runTurn(
+                config = testProvider(),
+                imageModelConfigs = listOf(images, images.copy(id = "disabled", isEnabled = false)),
+                messages = listOf(SharedPiChatMessage("user", "draw")), sessionId = "image-tools",
+            )
+            val imageModels = process.requests.single()["payload"]!!.jsonObject["image_models"]!!.jsonArray
+            assertEquals(1, imageModels.size)
+            val config = imageModels.single().jsonObject["model_config"]!!.jsonObject
+            assertEquals("gpt-image-2", config["model_id"]!!.jsonPrimitive.content)
+            assertEquals("image-channel-key", config["api_key"]!!.jsonPrimitive.content)
+            assertEquals("images", config["provider_config_id"]!!.jsonPrimitive.content)
+        } finally { bridge.close() }
+    }
+    @Test
     fun serviceTierIsTrimmedAndBlankIsOmitted() {
         assertFalse("service_tier" in testProvider().toSharedPiModelConfig())
         for (tier in listOf("fast", "ultrafast", "priority")) {

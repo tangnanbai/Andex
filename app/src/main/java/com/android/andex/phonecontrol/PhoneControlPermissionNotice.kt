@@ -50,7 +50,8 @@ fun PhoneControlPermissionNotice() {
                     notice = null
                 }
                 policy.sample(SystemClock.elapsedRealtime(), enabled, ready,
-                    preferences.enabled && preferences.accessibilityPreviouslyGranted)?.let { notice = it }
+                    preferences.enabled && preferences.accessibilityPreviouslyGranted,
+                    dismissed = preferences.accessibilityNoticeDismissed)?.let { notice = it }
                 delay(1000)
             }
         }
@@ -67,6 +68,9 @@ fun PhoneControlPermissionNotice() {
                 context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
             }) { Text("检查设置") }
         },
-        dismissButton = { TextButton(onClick = { notice = null }) { Text("稍后") } },
+        dismissButton = { TextButton(onClick = {
+            preferences.accessibilityNoticeDismissed = true
+            notice = null
+        }) { Text("稍后") } },
     )
 }

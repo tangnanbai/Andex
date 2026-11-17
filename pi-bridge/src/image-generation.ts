@@ -1,3 +1,5 @@
+import { imageOptions, imageSize, imageConfig, type ImageOptions } from "./image-options.js";
+
 export interface ImageModelConfig {
   model_id: string;
   pi_api: string;
@@ -9,10 +11,10 @@ export interface ImageModelConfig {
 export interface GeneratedImage { bytes: Buffer; mimeType: string; extension: string }
 export interface ImageInput { data: string; mimeType: string }
 type ObjectValue = Record<string, any>;
-const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+const MAX_IMAGE_BYTES = 32 * 1024 * 1024;
 
 export function isImageGenerationModel(id: string): boolean {
-  return /gpt-image|dall-e|nano-banana|nanobanana|gemini.*image|^imagen-/i.test(id);
+  return /gpt-image|dall-e|nano-banana|nanobanana|gemini.*image|^imagen-|^image[-_]?2(?:[.\-_]|$)/i.test(id);
 }
 
 export function imageType(bytes: Buffer): Pick<GeneratedImage, "mimeType" | "extension"> {
@@ -42,7 +44,19 @@ async function readBounded(response: Response, limit: number, signal: AbortSigna
 
 /** One generation request per user action. Never retry a possibly billed request automatically. */
 export async function generateImages(config: ImageModelConfig, prompt: string, inputs: ImageInput[], signal: AbortSignal,
-  fetcher: typeof fetch = fetch): Promise<{ images: GeneratedImage[]; text: string; usage?: ObjectValue }> {
+  fetcher: typeof fetch = fetch, explicitOptions: ImageOptions = {}): Promise<{ images: GeneratedImage[]; text: string; usage?: ObjectValue }> {
+  signal.throwIfAborted();
+  const options = imageOptions(prompt, explicitOptions);
+  const wirePrompt = options.background === "transparent"
+    ? `${prompt}\nOutput ${options.output_format ?? "png"} with a transparent background and a real alpha channel.`
+    : prompt;
+  const legacy = /dall-e/i.test(config.model_id);
+  const openaiOptions = {
+    size: imageSize(options),
+    ...(!legacy ? { output_format: options.output_format ?? "png" } : { response_format: "b64_json" }),
+    ...(options.background && !legacy ? { background: options.background } : {}),
+    ...(options.quality ? { quality: options.quality } : {}),
+  };
   const router = config.pi_provider_id === "openrouter";
   // Gemini image models use generateContent even on gateways configured for OpenAI chat.
   // Verified against the gateway's supported_endpoint_types and a real Nano Banana request.
@@ -60,19 +74,25 @@ export async function generateImages(config: ImageModelConfig, prompt: string, i
   let body: BodyInit;
   if (google) {
     endpoint = `${base}/models/${encodeURIComponent(config.model_id)}:generateContent`;
-    body = JSON.stringify({ contents: [{ role: "user", parts: [{ text: prompt }, ...inputs.map(i => ({ inlineData: i }))] }],
-      generationConfig: { responseModalities: ["TEXT", "IMAGE"] } });
+    body = JSON.stringify({ contents: [{ role: "user", parts: [{ text: wirePrompt }, ...inputs.map(i => ({ inlineData: i }))] }],
+      generationConfig: { responseModalities: ["TEXT", "IMAGE"],
+        ...(Object.keys(imageConfig(options)).length ? { imageConfig: imageConfig(options) } : {}) } });
     headers.set("Content-Type", "application/json");
   } else if (router) {
     endpoint = `${base}/chat/completions`;
     body = JSON.stringify({ model: config.model_id, messages: [{ role: "user", content: [
-      { type: "text", text: prompt }, ...inputs.map(i => ({ type: "image_url", image_url: { url: `data:${i.mimeType};base64,${i.data}` } })),
-    ] }], modalities: ["image", "text"], stream: false });
+      { type: "text", text: wirePrompt }, ...inputs.map(i => ({ type: "image_url", image_url: { url: `data:${i.mimeType};base64,${i.data}` } })),
+    ] }], modalities: ["image", "text"], stream: false,
+      ...(Object.keys(imageConfig(options)).length ? { image_config: {
+        ...(imageConfig(options).aspectRatio ? { aspect_ratio: imageConfig(options).aspectRatio } : {}),
+        ...(options.resolution ? { image_size: options.resolution } : {}),
+      } } : {}) });
     headers.set("Content-Type", "application/json");
   } else if (inputs.length) {
     endpoint = `${base}/images/edits`;
     const form = new FormData();
-    form.set("model", config.model_id); form.set("prompt", prompt); form.set("n", "1");
+    form.set("model", config.model_id); form.set("prompt", wirePrompt); form.set("n", "1");
+    for (const [key, value] of Object.entries(openaiOptions)) form.set(key, value);
     inputs.forEach((input, index) => {
       const bytes = Buffer.from(input.data, "base64");
       const type = imageType(bytes);
@@ -82,7 +102,7 @@ export async function generateImages(config: ImageModelConfig, prompt: string, i
     headers.delete("Content-Type");
   } else {
     endpoint = `${base}/images/generations`;
-    body = JSON.stringify({ model: config.model_id, prompt, n: 1, size: "1024x1024" });
+    body = JSON.stringify({ model: config.model_id, prompt: wirePrompt, n: 1, ...openaiOptions });
     headers.set("Content-Type", "application/json");
   }
   const response = await fetcher(endpoint, { method: "POST", headers, body, signal, redirect: "error" });
@@ -120,7 +140,7 @@ export async function generateImages(config: ImageModelConfig, prompt: string, i
       if (!download.ok) throw new Error(`图片下载失败（HTTP ${download.status}）。`);
       bytes = await readBounded(download, MAX_IMAGE_BYTES, signal);
     } else continue;
-    if (bytes.length > MAX_IMAGE_BYTES) throw new Error("生成图片超过 8 MB，请降低分辨率。");
+    if (bytes.length > MAX_IMAGE_BYTES) throw new Error("生成图片超过 32 MB，请降低分辨率。");
     images.push({ bytes, ...imageType(bytes) });
   }
   if (!images.length) throw new Error(texts.join("\n").slice(0, 500) || "接口未返回图片，可能被服务端拒绝或该模型不支持生图。");

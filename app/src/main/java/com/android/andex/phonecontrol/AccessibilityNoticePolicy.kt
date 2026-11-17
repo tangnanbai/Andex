@@ -13,8 +13,9 @@ internal class AccessibilityNoticePolicy {
         previousEnabled = null
     }
 
-    fun sample(now: Long, enabled: Boolean?, connected: Boolean, monitoring: Boolean): AccessibilityNotice? {
-        if (connected || !monitoring || enabled == null) {
+    fun sample(now: Long, enabled: Boolean?, connected: Boolean, monitoring: Boolean,
+        dismissed: Boolean = false): AccessibilityNotice? {
+        if (dismissed || connected || !monitoring || enabled == null) {
             missingSince = null
             notified = null
             previousEnabled = enabled

@@ -3727,6 +3727,7 @@ private fun AssistantMessageBlock(
 
 
                 usageStatistics = message.usageStatistics,
+                model = com.android.andex.data.responseModelIdentity(message.providerPayloadJson),
 
 
 
@@ -3999,6 +4000,11 @@ fun ConversationAssistantGroupBubble(
 
 
     val groupUsageStatistics = messages.lastOrNull { it.usageStatistics != null }?.usageStatistics
+    val groupModel = remember(messages) {
+        messages.asReversed().asSequence()
+            .map { com.android.andex.data.responseModelIdentity(it.providerPayloadJson) }
+            .firstOrNull { it.isKnown } ?: com.android.andex.data.ResponseModelIdentity()
+    }
 
 
 
@@ -4155,6 +4161,7 @@ fun ConversationAssistantGroupBubble(
 
 
                     usageStatistics = groupUsageStatistics,
+                    model = groupModel,
 
 
 
@@ -4587,6 +4594,7 @@ fun ConversationAssistantGroupBubble(
 
 
                 usageStatistics = groupUsageStatistics,
+                model = groupModel,
 
 
 
@@ -12996,6 +13004,7 @@ private fun AssistantMessageAction(
 
 
     icon: ImageVector,
+    responseModel: com.android.andex.data.ResponseModelIdentity? = null,
 
 
 
@@ -13039,7 +13048,9 @@ private fun AssistantMessageAction(
 
 
 
-        Icon(
+        if (responseModel != null) {
+            ResponseModelIcon(responseModel, Modifier.size(14.dp), "$contentDescription · ${responseModel.description}")
+        } else Icon(
 
 
 
@@ -13084,6 +13095,7 @@ private fun AssistantMessageActions(
 
 
     usageStatistics: ChatUsageStatistics?,
+    model: com.android.andex.data.ResponseModelIdentity,
 
 
 
@@ -13284,6 +13296,7 @@ private fun AssistantMessageActions(
 
 
                 icon = LucideIcons.ChartNoAxesColumn,
+                responseModel = model,
 
 
 

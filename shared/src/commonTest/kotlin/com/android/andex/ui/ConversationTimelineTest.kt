@@ -6,6 +6,15 @@ import kotlin.test.assertTrue
 import kotlin.test.assertFalse
 
 class ConversationTimelineTest {
+    @Test fun previewDragStartsAtTheCurrentTurnInsteadOfJumpingToTheBottom() {
+        assertEquals(2, timelineIndexForDrag(2, 0f, 100f, 5, 10f, 3f))
+        assertEquals(2, timelineIndexForDrag(2, 8f, 100f, 5, 10f, 3f))
+        assertEquals(3, timelineIndexForDrag(2, 20f, 100f, 5, 10f, 3f))
+        assertEquals(1, timelineIndexForDrag(2, -20f, 100f, 5, 10f, 3f))
+        assertEquals(4, timelineIndexForDrag(2, 200f, 100f, 5, 10f, 3f))
+        assertEquals(0, timelineIndexForDrag(2, -200f, 100f, 5, 10f, 3f))
+    }
+
     @Test
     fun compactWindowKeepsFiveTurnSequenceAnchoredLikeMinimap() {
         assertEquals(listOf(0, 1, 2, 3), compactTimelineIndices(total = 5, currentIndex = 0))

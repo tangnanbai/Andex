@@ -6,6 +6,28 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class WorkTraceModelsTest {
+    @Test fun modelIdentityStaysWithTheResponseAndNeverLeaksAcrossUserTurns() {
+        val unknown = com.android.andex.data.ResponseModelIdentity()
+        val deepseek = com.android.andex.data.ResponseModelIdentity("proxy", "deepseek-chat")
+        val image = com.android.andex.data.ResponseModelIdentity("proxy", "gpt-image-2")
+        val sources = listOf(
+            WorkTraceModelSource(true, null, unknown),
+            WorkTraceModelSource(false, "group1", unknown),
+            WorkTraceModelSource(false, "group1", deepseek),
+            WorkTraceModelSource(true, null, unknown),
+            WorkTraceModelSource(false, "group2", image),
+            WorkTraceModelSource(true, null, unknown),
+        )
+        assertEquals(listOf(deepseek, deepseek, deepseek, image, image, unknown), workTraceModels(sources))
+        assertEquals(listOf(deepseek, deepseek, deepseek, image, image, image), workTraceModels(sources, image))
+    }
+    @Test fun viewedTurnExpandsInsteadOfTheNewestOrRunningTurn() {
+        assertTrue(workTraceTaskExpanded("viewed", "viewed", emptyList(), emptyList()))
+        assertFalse(workTraceTaskExpanded("newest", "viewed", emptyList(), emptyList()))
+        assertFalse(workTraceTaskExpanded("viewed", "newest", emptyList(), emptyList()))
+        assertTrue(workTraceTaskExpanded("newest", "newest", emptyList(), emptyList()))
+    }
+
     @Test fun newestRowAccountsForPreviouslyExpandedHistory() {
         val tasks = groupWorkTraceSteps(listOf(
             WorkTraceStep("u1", "旧任务", "", "输入"),

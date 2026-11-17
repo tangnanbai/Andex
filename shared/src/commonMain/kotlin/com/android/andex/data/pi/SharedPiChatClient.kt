@@ -1,6 +1,8 @@
 package com.android.andex.data.pi
 
 import com.android.andex.data.LlmProviderConfig
+import com.android.andex.data.availableModelOptions
+import com.android.andex.data.isImageGenerationModel
 import com.android.andex.data.ModelsDevModelLimits
 import com.android.andex.data.PiProviderCatalog
 import com.android.andex.data.customPiApi
@@ -158,6 +160,7 @@ class SharedPiChatClient(
 
     suspend fun runTurn(
         config: LlmProviderConfig,
+        imageModelConfigs: List<LlmProviderConfig> = emptyList(),
         messages: List<SharedPiChatMessage>,
         sessionId: String,
         workspaceDirectory: String = "/workspace",
@@ -201,6 +204,16 @@ class SharedPiChatClient(
         )
         val payload = buildJsonObject {
             put("model_config", modelConfig)
+            put("image_models", buildJsonArray {
+                imageModelConfigs.availableModelOptions().filter { isImageGenerationModel(it.modelId) }.forEach { option ->
+                    val imageConfig = imageModelConfigs.first { it.id == option.providerConfigId }.copy(modelId = option.modelId)
+                    add(buildJsonObject {
+                        put("key", option.key)
+                        put("name", "${option.providerName} / ${option.modelId}")
+                        put("model_config", imageConfig.toSharedPiModelConfig(timeoutMillis = timeoutMillis))
+                    })
+                }
+            })
             put("session_id", resolvedSessionId)
             put("system_prompt", systemPrompt.ifBlank { platformDefaultSystemPrompt() })
             put("messages", messages.withSkillCommand(skillCommand).toPiMessages())

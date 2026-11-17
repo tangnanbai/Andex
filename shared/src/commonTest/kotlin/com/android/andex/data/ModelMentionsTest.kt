@@ -19,11 +19,22 @@ class ModelMentionsTest {
         assertFailsWith<IllegalArgumentException> { resolveModelMention(options.joinToString(" ") { it.mentionToken() }, options) }
         assertNull(resolveModelMention("请回复 test@example.com", options))
     }
-    @Test fun mentionPickerUsesCursorAndIgnoresEmailsAndCompletedTokens() {
+    @Test fun mentionPickerUsesCursorAndIgnoresCompletedTokens() {
         assertEquals(ModelMentionQuery(3, 7, "gpt"), modelMentionQuery("画图 @gpt 后面文字", 7))
-        assertNull(modelMentionQuery("a@b.com", 7))
+        assertEquals(ModelMentionQuery(1, 7, "b.com"), modelMentionQuery("a@b.com", 7))
         assertNull(modelMentionQuery("@「v2 / gpt-image-2」", 18))
         assertNotNull(modelMentionQuery("请用@", 3))
+    }
+    @Test fun mentionPickerOpensImmediatelyAfterTextWithoutChangingItsPrefixOrSuffix() {
+        listOf("hello", "123", "请画图", "hello.", "hello-", "hello_").forEach { prefix ->
+            val text = "${prefix}@gpt 后续"
+            val query = assertNotNull(modelMentionQuery(text, prefix.length + 4))
+            assertEquals(ModelMentionQuery(prefix.length, prefix.length + 4, "gpt"), query)
+            val option = configs.availableModelOptions().first()
+            val inserted = text.replaceRange(query.start, query.end, option.mentionToken())
+            assertEquals(option, resolveModelMention(inserted, configs.availableModelOptions()))
+            assertEquals("$prefix 后续", stripModelMentions(inserted))
+        }
     }
     @Test fun detectsImageModelsWithoutTreatingVisionChatModelsAsGenerators() {
         assertTrue(isImageGenerationModel("gpt-image-2.5-flare"))

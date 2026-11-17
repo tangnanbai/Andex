@@ -7,7 +7,7 @@ import { pathToFileURL } from "node:url";
 import { build } from "esbuild";
 
 const directory = await mkdtemp(join(tmpdir(), "andex-image-test-"));
-await build({ entryPoints: ["src/image-generation.ts"], outfile: join(directory, "image.mjs"), platform: "node", format: "esm" });
+await build({ entryPoints: ["src/image-generation.ts"], outfile: join(directory, "image.mjs"), platform: "node", format: "esm", bundle: true });
 const { generateImages, isImageGenerationModel } = await import(pathToFileURL(join(directory, "image.mjs")));
 after(() => rm(directory, { recursive: true, force: true }));
 const config = { model_id: "gpt-image-2", base_url: "https://api.example.test/v1/responses", pi_api: "openai-responses", pi_provider_id: "openai-responses-custom", api_key: "private-test-key" };
@@ -18,7 +18,7 @@ test("OpenAI image request uses generation endpoint and returns real binary with
     const result = await generateImages(config, "draw", [], signal(), async (url, request) => {
         assert.equal(url, "https://api.example.test/v1/images/generations");
         assert.equal(request.headers.get("Authorization"), "Bearer private-test-key");
-        assert.deepEqual(JSON.parse(request.body), { model: "gpt-image-2", prompt: "draw", n: 1, size: "1024x1024" });
+        assert.deepEqual(JSON.parse(request.body), { model: "gpt-image-2", prompt: "draw", n: 1, size: "1024x1024", output_format: "png" });
         return Response.json({ data: [{ b64_json: png }], usage: { input_tokens: 4 } });
     });
     assert.equal(result.images[0].extension, "png");
@@ -78,6 +78,37 @@ test("Nano Banana on OpenAI gateway uses declared Gemini endpoint and key header
     assert.equal(url, "https://api.example.test/v1beta/models/gemini-nano-banana-2.1:generateContent");
     assert.equal(request.headers.get("x-goog-api-key"), config.api_key);
     assert.deepEqual(JSON.parse(request.body).generationConfig.responseModalities, ["TEXT", "IMAGE"]);
+    return Response.json({ candidates: [{ content: { parts: [{ inlineData: { data: png } }] } }] });
+  });
+});
+
+test("prompt dimensions, output format and transparent background reach the generation API", async () => {
+  await generateImages(config, "画一个图标，尺寸 512×768，PNG，透明背景", [], signal(), async (_url, request) => {
+    const body = JSON.parse(request.body);
+    assert.equal(body.size, "512x768");
+    assert.equal(body.output_format, "png");
+    assert.equal(body.background, "transparent");
+    return Response.json({ data: [{ b64_json: png }] });
+  });
+});
+
+test("tool overrides reach edits as multipart fields and conflicts fail without billing", async () => {
+  await generateImages(config, "画图 1024x1024", [{ data: png, mimeType: "image/png" }], signal(), async (_url, request) => {
+    assert.equal(request.body.get("size"), "1536x1024");
+    assert.equal(request.body.get("output_format"), "png");
+    assert.equal(request.body.get("background"), "transparent");
+    return Response.json({ data: [{ b64_json: png }] });
+  }, { size: "1536x1024", output_format: "png", background: "transparent" });
+  await assert.rejects(generateImages(config, "JPEG 透明背景", [], signal(), () => {
+    throw new Error("should not send a paid request");
+  }), /JPEG 不支持透明/);
+});
+
+test("Nano Banana resolution and ratio use imageConfig instead of OpenAI fields", async () => {
+  await generateImages({ ...config, model_id: "gemini-nano-banana-2.1" }, "画一张 16:9 的 2K 壁纸", [], signal(), async (_url, request) => {
+    const body = JSON.parse(request.body);
+    assert.deepEqual(body.generationConfig.imageConfig, { aspectRatio: "16:9", imageSize: "2K" });
+    assert.equal(body.size, undefined);
     return Response.json({ candidates: [{ content: { parts: [{ inlineData: { data: png } }] } }] });
   });
 });
